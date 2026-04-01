@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- rename the npm package to `opencode-bytheway` so the standalone repo can publish under a clean available name
+
 ## 0.1.0
 
 - add `/btw` for same-terminal temporary side sessions

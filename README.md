@@ -1,4 +1,4 @@
-# opencode-btw
+# opencode-bytheway
 
 OpenCode TUI plugin that adds side-session and popup "by the way" workflows.
 
@@ -10,7 +10,7 @@ Add the package to your OpenCode plugin config:
 
 ```json
 {
-  "plugin": ["opencode-btw"]
+  "plugin": ["opencode-bytheway"]
 }
 ```
 
@@ -18,7 +18,7 @@ Optional version pin:
 
 ```json
 {
-  "plugin": ["opencode-btw@0.1.0"]
+  "plugin": ["opencode-bytheway@0.1.1"]
 }
 ```
 
@@ -57,6 +57,6 @@ For local OpenCode testing, point your plugin config at this repository path.
 Example:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
