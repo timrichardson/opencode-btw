@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- publish a clean release from the planner-aligned workflow after the earlier workflow-only tags failed before matching package metadata
+
 ## 0.1.2
 
 - align the standalone release workflow more closely with `opencode-planner` before the next publish attempt
