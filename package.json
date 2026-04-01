@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "opencode-btw",
+  "version": "0.4.2",
+  "description": "OpenCode TUI plugin that adds /btw side sessions and /btw_popup one-off context popups.",
+  "author": "Tim Richardson",
+  "homepage": "https://github.com/timrichardson/opencode-btw",
+  "bugs": {
+    "url": "https://github.com/timrichardson/opencode-btw/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/timrichardson/opencode-btw.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "bun@1.3.11",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./server": "./index.js",
+    "./tui": "./dist/tui.js"
+  },
+  "oc-plugin": [
+    "tui"
+  ],
+  "files": [
+    "dist",
+    "index.js",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bun ./scripts/build.ts",
+    "test": "NODE_ENV=production bun test --conditions=browser ./tui.test.tsx",
+    "prepublishOnly": "bun run build && bun run test"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.3.9",
+    "@opentui/core": "0.1.92",
+    "@opentui/solid": "0.1.92",
+    "clipboardy": "4.0.0",
+    "solid-js": "1.9.10"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "tui",
+    "btw"
+  ]
+}
