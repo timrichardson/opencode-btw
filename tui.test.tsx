@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test"
+import serverPlugin from "./index.js"
 import plugin, { debug, plain, wrap } from "./tui"
 
 function tick() {
   return new Promise((resolve) => setTimeout(resolve, 0))
 }
+
+const env = () =>
+  (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> }
+  }).process?.env ?? {}
 
 function cmd(rows: any[], value: string) {
   return rows.find((row) => row.value === value)
@@ -12,9 +18,14 @@ function cmd(rows: any[], value: string) {
 function setup(input?: {
   session?: boolean
   promptError?: Error
+  forkError?: Error
+  forkDelays?: number[]
+  forkIDs?: string[]
   messagesDelay?: number
   sourceTail?: boolean
   sourceBlank?: boolean
+  deleteError?: Error
+  deleteReject?: Error
 }) {
   const calls: string[] = []
   const looked: string[] = []
@@ -25,6 +36,7 @@ function setup(input?: {
   const handlers = new Map<string, Array<(evt: any) => void>>()
   const dispose: Array<() => void | Promise<void>> = []
   const kv = new Map<string, unknown>()
+  let forks = 0
   let messages = 0
   let fork: Record<string, unknown> | undefined
   let sent: Record<string, unknown> | undefined
@@ -106,7 +118,12 @@ function setup(input?: {
         async fork(args: Record<string, unknown>) {
           calls.push("fork")
           fork = args
-          return { data: { id: "ses_btw" } }
+          const delay = input?.forkDelays?.[forks] ?? 0
+          const id = input?.forkIDs?.[forks] ?? "ses_btw"
+          forks += 1
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+          if (input?.forkError) return { error: input.forkError }
+          return { data: { id } }
         },
         async promptAsync(args: Record<string, unknown>) {
           calls.push("promptAsync")
@@ -210,6 +227,8 @@ function setup(input?: {
         },
         async delete() {
           calls.push("delete")
+          if (input?.deleteReject) throw input.deleteReject
+          if (input?.deleteError) return { error: input.deleteError }
           done()
           return {}
         },
@@ -241,6 +260,28 @@ function setup(input?: {
 }
 
 describe("opencode-bytheway tui plugin", () => {
+  test("exports the runtime plugin id from index.js", () => {
+    expect(serverPlugin.id).toBe("opencode-bytheway")
+  })
+
+  test("registers btw_status and injects the btw-status command", async () => {
+    const server = await serverPlugin.server()
+    const cfg = { command: { existing: { description: "keep" } } } as any
+
+    await server.config(cfg)
+
+    expect(Object.keys(server.tool)).toEqual(["btw_status"])
+    expect(await server.tool.btw_status.execute({}, { sessionID: "ses_main" })).toBe(
+      "opencode-bytheway is loaded.\nsession: ses_main",
+    )
+    expect(cfg.command["btw-status"]).toEqual({
+      description: "Check whether the opencode-bytheway plugin is loaded",
+      agent: "general",
+      template: "Call the btw_status tool and return its output.",
+    })
+    expect(cfg.command.existing).toEqual({ description: "keep" })
+  })
+
   test("registers /btw slash command", async () => {
     const { api, rows } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
@@ -249,6 +290,29 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "btw" })
     expect(cmd(rows(), "btw.popup")?.slash).toEqual({ name: "btw_popup" })
     expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "btw_end" })
+  })
+
+  test("derives slash command names from OPENCODE_BYTHEWAY_COMMAND", async () => {
+    const prev = env()["OPENCODE_BYTHEWAY_COMMAND"]
+    env()["OPENCODE_BYTHEWAY_COMMAND"] = "aside"
+
+    try {
+      const { api, rows, views } = setup()
+      await plugin.tui(api, undefined, { state: "first" } as any)
+
+      expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
+      expect(cmd(rows(), "btw.popup")?.slash).toEqual({ name: "aside_popup" })
+      expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside_end" })
+
+      cmd(rows(), "btw.open").onSelect()
+      await tick()
+
+      expect(views.at(-1)?.props?.title).toBe("Entered /aside Session")
+      expect(views.at(-1)?.props?.message).toContain("Run /aside_end to return")
+    } finally {
+      if (prev === undefined) delete env()["OPENCODE_BYTHEWAY_COMMAND"]
+      else env()["OPENCODE_BYTHEWAY_COMMAND"] = prev
+    }
   })
 
   test("guards when not inside a session", async () => {
@@ -496,6 +560,35 @@ describe("opencode-bytheway tui plugin", () => {
     expect(calls).toEqual(["messages", "fork", "promptAsync", "delete"])
   })
 
+  test("deletes a stale popup fork when a delayed run is replaced", async () => {
+    const { api, calls, rows, views, emit } = setup({
+      forkDelays: [30, 0],
+      forkIDs: ["ses_old", "ses_new"],
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.popup").onSelect()
+    let prompt: any = views.at(-1)
+    prompt.props.onConfirm("first question")
+
+    await tick()
+
+    cmd(rows(), "btw.popup").onSelect()
+    prompt = views.at(-1)
+    prompt.props.onConfirm("second question")
+
+    await tick()
+
+    emit("session.idle", {
+      sessionID: "ses_new",
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    expect(calls.filter((item) => item === "promptAsync")).toHaveLength(1)
+    expect(calls.filter((item) => item === "delete")).toHaveLength(2)
+  })
+
   test("filters synthetic text from response", () => {
     expect(
       plain([{ type: "text", text: "skip", synthetic: true } as any, { type: "text", text: "keep" } as any] as any),
@@ -553,7 +646,19 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     cmd(rows(), "btw.open").onSelect()
-    expect(toasts.at(-1)?.message).toBe("/btw_popup is already running.")
+    expect(toasts.at(-1)?.message).toBe("/btw is unavailable while /btw_popup is running.")
+  })
+
+  test("shows an error toast when opening /btw fails", async () => {
+    const { api, kv, nav, rows, toasts } = setup({ forkError: new Error("fork failed") })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+
+    expect(toasts.at(-1)).toEqual({ variant: "error", message: "fork failed" })
+    expect(nav).toEqual([])
+    expect(kv.get("opencode-bytheway.active")).toBeUndefined()
   })
 
   test("opens a btw side session and records origin/temp", async () => {
@@ -620,5 +725,53 @@ describe("opencode-bytheway tui plugin", () => {
       { name: "session", params: { sessionID: "ses_main" } },
     ])
     expect(kv.get("opencode-bytheway.active")).toBeUndefined()
+  })
+
+  test("keeps btw state when temp-session deletion returns an error", async () => {
+    const { api, calls, kv, nav, rows, toasts } = setup({
+      deleteError: new Error("nope"),
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+
+    cmd(rows(), "btw.end").onSelect()
+    await tick()
+
+    expect(calls).toEqual(["messages", "fork", "delete"])
+    expect(nav).toEqual([
+      { name: "session", params: { sessionID: "ses_btw" } },
+      { name: "session", params: { sessionID: "ses_main" } },
+    ])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expect(toasts.at(-1)).toEqual({
+      variant: "error",
+      message: "Returned from /btw, but failed to delete the temp session.",
+    })
+  })
+
+  test("keeps btw state when temp-session deletion rejects", async () => {
+    const { api, calls, kv, nav, rows, toasts } = setup({
+      deleteReject: new Error("boom"),
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+
+    cmd(rows(), "btw.end").onSelect()
+    await tick()
+
+    expect(calls).toEqual(["messages", "fork", "delete"])
+    expect(nav).toEqual([
+      { name: "session", params: { sessionID: "ses_btw" } },
+      { name: "session", params: { sessionID: "ses_main" } },
+    ])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expect(toasts.at(-1)).toEqual({
+      variant: "error",
+      message: "Returned from /btw, but failed to delete the temp session.",
+    })
   })
 })

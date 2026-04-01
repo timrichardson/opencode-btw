@@ -18,11 +18,19 @@ Optional version pin:
 
 ```json
 {
-  "plugin": ["opencode-bytheway@0.1.4"]
+  "plugin": ["opencode-bytheway@0.1.5"]
 }
 ```
 
 Restart OpenCode after installing or updating the plugin.
+
+Optional command-family override:
+
+```bash
+OPENCODE_BYTHEWAY_COMMAND=aside
+```
+
+With that env var set, the plugin exposes `/aside`, `/aside_end`, and `/aside_popup` instead of the default `/btw` family.
 
 ## Commands
 
@@ -41,12 +49,24 @@ Restart OpenCode after installing or updating the plugin.
 
 ```bash
 bun install --ignore-scripts
-bun test ./tui.test.tsx
 bun run build
+bun run test
 npm pack --dry-run
 ```
 
-For local OpenCode testing, point your plugin config at this repository path.
+For local OpenCode testing, point your plugin config at this repository path after running `bun run build`, since the TUI entrypoint is generated into `dist/`.
+
+Example `opencode.json` entry when the repository lives at `~/projects/opencode-btw-plugin`:
+
+```json
+{
+  "plugin": [
+    "file:///home/{USER}/projects/opencode-btw-plugin"
+  ]
+}
+```
+
+Use an absolute `file://` path in the config. Do not rely on `~` or `$USER` expansion inside `opencode.json`, since config values are not shell-expanded.
 
 ## Release
 

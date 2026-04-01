@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- align the runtime plugin id with the published package name and add direct server-entry coverage
+- harden popup and temp-session cleanup for canceled runs and failed `/btw_end` deletes
+- add an optional `OPENCODE_BYTHEWAY_COMMAND` env var to rename the `/btw` slash-command family
+- pin Bun in CI and release workflows and document local `file://` plugin development setup
+
 ## 0.1.4
 
 - publish a clean release from the planner-aligned workflow after the earlier workflow-only tags failed before matching package metadata

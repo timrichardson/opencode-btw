@@ -21,6 +21,23 @@ declare namespace JSX {
 
 const id = "opencode-bytheway";
 
+const slashbase = () => {
+  const env = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }).process?.env;
+  const value = env?.["OPENCODE_BYTHEWAY_COMMAND"]
+    ?.trim()
+    .replace(/^\/+/, "")
+    .toLowerCase();
+  if (!value || !/^[a-z][a-z0-9_]*$/.test(value)) return "btw";
+  return value;
+};
+
+const slash = (name: string) => `/${name}`;
+const openname = () => slashbase();
+const popupname = () => `${slashbase()}_popup`;
+const endname = () => `${slashbase()}_end`;
+
 type Step =
   | "creating"
   | "waiting"
@@ -118,7 +135,7 @@ export const plain = (parts: Part[]) => {
     .join("\n\n")
     .trim();
   if (text) return text;
-  return "The /btw run completed without a visible text response.";
+  return `The ${slash(popupname())} run completed without a visible text response.`;
 };
 
 export const wrap = (input: string, cols: number) => {
@@ -215,10 +232,11 @@ const view = (run: Run) => {
   if (run.step === "creating") return "Creating temporary fork...";
   if (run.step === "waiting") return "Waiting for the first reply tokens...";
   if (run.step === "streaming") return "Streaming reply...";
-  if (run.step === "canceled") return "The /btw run was canceled.";
+  if (run.step === "canceled") return `The ${slash(popupname())} run was canceled.`;
   if (run.err) return run.err;
   return (
-    "The /btw run completed without a visible text response.\n\n" + debug(run)
+    `The ${slash(popupname())} run completed without a visible text response.\n\n` +
+    debug(run)
   );
 };
 
@@ -312,7 +330,7 @@ const Body = (props: {
     >
       <box flexDirection="column" flexShrink={0} paddingBottom={1}>
         <text fg={ui.text} attributes={TextAttributes.BOLD}>
-          /btw
+          {slash(popupname())}
         </text>
         <text fg={props.run.step === "error" ? ui.danger : ui.muted}>
           {note(props.run)}
@@ -762,11 +780,11 @@ const tui: TuiPlugin = async (api) => {
         if (evt.properties.sessionID !== item.fork) return;
         trace(
           item,
-          `session.error ${msg(evt.properties.error ?? new Error("Failed to run /btw."))}`,
+          `session.error ${msg(evt.properties.error ?? new Error(`Failed to run ${slash(popupname())}.`))}`,
         );
         void finish(
           item,
-          evt.properties.error ?? new Error("Failed to run /btw."),
+          evt.properties.error ?? new Error(`Failed to run ${slash(popupname())}.`),
         );
       }),
     );
@@ -783,9 +801,13 @@ const tui: TuiPlugin = async (api) => {
       ...(cut.mode === "cut" ? { messageID: cut.messageID } : {}),
     });
     if (next.error || !next.data?.id)
-      throw next.error ?? new Error("Failed to create btw session.");
-    if (run !== item) return;
-    item.fork = next.data.id;
+      throw next.error ?? new Error("Failed to create temporary session.");
+    const forkID = next.data.id;
+    if (run !== item || item.ctrl.signal.aborted) {
+      await api.client.session.delete({ sessionID: forkID }).catch(() => undefined);
+      return;
+    }
+    item.fork = forkID;
     trace(item, `fork ${item.fork}`);
     item.step = "waiting";
     wire(item);
@@ -855,14 +877,14 @@ const tui: TuiPlugin = async (api) => {
           if (!ask) {
             api.ui.toast({
               variant: "warning",
-              message: "Enter a prompt for /btw_popup.",
+              message: `Enter a prompt for ${slash(popupname())}.`,
             });
             return;
           }
           if (typeof sessionID !== "string") {
             api.ui.toast({
               variant: "warning",
-              message: "/btw_popup is only available inside a session.",
+              message: `${slash(popupname())} is only available inside a session.`,
             });
             return;
           }
@@ -882,7 +904,7 @@ const tui: TuiPlugin = async (api) => {
       ...(cut.mode === "cut" ? { messageID: cut.messageID } : {}),
     });
     if (next.error || !next.data?.id)
-      throw next.error ?? new Error("Failed to create btw session.");
+      throw next.error ?? new Error("Failed to create temporary session.");
     return next.data.id;
   };
 
@@ -890,7 +912,7 @@ const tui: TuiPlugin = async (api) => {
     if (run && busy(run)) {
       api.ui.toast({
         variant: "warning",
-        message: "/btw_popup is already running.",
+        message: `${slash(openname())} is unavailable while ${slash(popupname())} is running.`,
       });
       return;
     }
@@ -900,40 +922,47 @@ const tui: TuiPlugin = async (api) => {
     if (typeof sessionID !== "string") {
       api.ui.toast({
         variant: "warning",
-        message: "/btw is only available inside a session.",
+        message: `${slash(openname())} is only available inside a session.`,
       });
       return;
     }
     if (state?.temp === sessionID) {
       api.ui.toast({
         variant: "warning",
-        message: "Already inside a /btw session. Run /btw_end to return.",
+        message: `Already inside a ${slash(openname())} session. Run ${slash(endname())} to return.`,
       });
       return;
     }
     if (state) {
       api.ui.toast({
         variant: "warning",
-        message: "A /btw session is already active. Run /btw_end first.",
+        message: `A ${slash(openname())} session is already active. Run ${slash(endname())} first.`,
       });
       return;
     }
 
-    const temp = await fork(sessionID);
-    save({ origin: sessionID, temp });
-    api.route.navigate("session", { sessionID: temp });
-    const DialogAlert = api.ui.DialogAlert;
-    api.ui.dialog.setSize("large");
-    api.ui.dialog.replace(() =>
-      DialogAlert({
-        title: "Entered /btw Session",
-        message:
-          "You are now in a temporary /btw session in this same terminal. Run /btw_end to return to your original session.",
-        onConfirm: () => {
-          api.ui.dialog.clear();
-        },
-      }),
-    );
+    try {
+      const temp = await fork(sessionID);
+      save({ origin: sessionID, temp });
+      api.route.navigate("session", { sessionID: temp });
+      const DialogAlert = api.ui.DialogAlert;
+      api.ui.dialog.setSize("large");
+      api.ui.dialog.replace(() =>
+        DialogAlert({
+          title: `Entered ${slash(openname())} Session`,
+          message:
+            `You are now in a temporary ${slash(openname())} session in this same terminal. Run ${slash(endname())} to return to your original session.`,
+          onConfirm: () => {
+            api.ui.dialog.clear();
+          },
+        }),
+      );
+    } catch (err) {
+      api.ui.toast({
+        variant: "error",
+        message: msg(err),
+      });
+    }
   };
 
   const end = async () => {
@@ -941,26 +970,29 @@ const tui: TuiPlugin = async (api) => {
     if (!state) {
       api.ui.toast({
         variant: "warning",
-        message: "No active /btw session.",
+        message: `No active ${slash(openname())} session.`,
       });
       return;
     }
 
-    save(undefined);
     api.route.navigate("session", { sessionID: state.origin });
-    const result = await api.client.session
-      .delete({ sessionID: state.temp })
-      .catch(() => undefined);
+    let result;
+    try {
+      result = await api.client.session.delete({ sessionID: state.temp });
+    } catch {
+      result = { error: new Error("Failed to delete the temp session.") };
+    }
     if (result?.error) {
       api.ui.toast({
         variant: "error",
-        message: "Returned from /btw, but failed to delete the temp session.",
+        message: `Returned from ${slash(openname())}, but failed to delete the temp session.`,
       });
       return;
     }
+    save(undefined);
     api.ui.toast({
       variant: "info",
-      message: "Returned from /btw session.",
+      message: `Returned from ${slash(openname())} session.`,
     });
   };
 
@@ -979,10 +1011,10 @@ const tui: TuiPlugin = async (api) => {
       {
         title: "By the way",
         value: "btw.open",
-        description: "Open a /btw side session in this terminal",
+        description: `Open a ${slash(openname())} side session in this terminal`,
         category: "Session",
         slash: {
-          name: "btw",
+          name: openname(),
         },
         hidden: typeof sessionID !== "string" || active,
         onSelect: () => {
@@ -995,7 +1027,7 @@ const tui: TuiPlugin = async (api) => {
         description: "Ask a one-off popup question in a temporary fork",
         category: "Session",
         slash: {
-          name: "btw_popup",
+          name: popupname(),
         },
         hidden: typeof sessionID !== "string",
         enabled: !inbtw,
@@ -1003,8 +1035,7 @@ const tui: TuiPlugin = async (api) => {
           if (inbtw) {
             api.ui.toast({
               variant: "warning",
-              message:
-                "/btw_popup is disabled inside a /btw session. Run /btw_end first.",
+              message: `${slash(popupname())} is disabled inside a ${slash(openname())} session. Run ${slash(endname())} first.`,
             });
             return;
           }
@@ -1012,12 +1043,12 @@ const tui: TuiPlugin = async (api) => {
         },
       },
       {
-        title: "End /btw",
+        title: `End ${slash(openname())}`,
         value: "btw.end",
-        description: "Return to the original session and close /btw",
+        description: `Return to the original session and close ${slash(openname())}`,
         category: "Session",
         slash: {
-          name: "btw_end",
+          name: endname(),
         },
         hidden: typeof sessionID !== "string" || !active,
         suggested: inbtw,
