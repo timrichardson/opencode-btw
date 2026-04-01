@@ -1,36 +1,50 @@
-name: release
+name: Release
 
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          cache: npm
 
       - name: Install dependencies
         run: bun install --ignore-scripts
 
-      - name: Verify tag matches package version
+      - name: Derive release metadata
+        id: meta
+        shell: bash
         run: |
-          VERSION=$(bun -e 'console.log(JSON.parse(await Bun.file("package.json").text()).version)')
-          TAG=${GITHUB_REF_NAME#v}
-          test "$VERSION" = "$TAG"
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" == *-* ]]; then
+            echo "Only stable release tags are supported: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tag matches package version
+        shell: bash
+        run: |
+          package_version=$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")
+          if [[ "$package_version" != "${{ steps.meta.outputs.version }}" ]]; then
+            echo "Tag version ${{ steps.meta.outputs.version }} does not match package.json version $package_version" >&2
+            exit 1
+          fi
 
       - name: Test
         run: bun run test
@@ -38,5 +52,16 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Publish package
-        run: npm publish --access public --provenance
+      - run: npm publish --access public --tag latest
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "GitHub release for $GITHUB_REF_NAME already exists."
+            exit 0
+          fi
+
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
