@@ -1,18 +1,18 @@
 const cmd = {
-  description: "Check whether the opencode-btw plugin is loaded",
+  description: "Check whether the opencode-bytheway plugin is loaded",
   agent: "general",
   template: "Call the btw_status tool and return its output.",
 }
 
 export default {
-  id: "opencode-btw",
+  id: "opencode-bytheway",
   server: async () => ({
     tool: {
       btw_status: {
         description: "Report plugin status for local development",
         args: {},
         async execute(_, ctx) {
-          return ["opencode-btw is loaded.", `session: ${ctx.sessionID ?? "<none>"}`].join("\n")
+          return ["opencode-bytheway is loaded.", `session: ${ctx.sessionID ?? "<none>"}`].join("\n")
         },
       },
     },

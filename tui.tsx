@@ -19,7 +19,7 @@ declare namespace JSX {
   }
 }
 
-const id = "opencode-btw";
+const id = "opencode-bytheway";
 
 type Step =
   | "creating"
@@ -85,7 +85,7 @@ const ui = {
   danger: "#ff7b72",
 };
 
-const key = "opencode-btw.active";
+const key = "opencode-bytheway.active";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isbtw = (value: unknown): value is Btw => {

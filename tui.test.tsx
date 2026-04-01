@@ -240,7 +240,7 @@ function setup(input?: {
   }
 }
 
-describe("opencode-btw tui plugin", () => {
+describe("opencode-bytheway tui plugin", () => {
   test("registers /btw slash command", async () => {
     const { api, rows } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
@@ -565,7 +565,7 @@ describe("opencode-btw tui plugin", () => {
 
     expect(calls).toEqual(["messages", "fork"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-btw.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
   })
 
   test("shows a btw entry message with exit instructions", async () => {
@@ -619,6 +619,6 @@ describe("opencode-btw tui plugin", () => {
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
     ])
-    expect(kv.get("opencode-btw.active")).toBeUndefined()
+    expect(kv.get("opencode-bytheway.active")).toBeUndefined()
   })
 })

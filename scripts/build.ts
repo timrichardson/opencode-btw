@@ -21,4 +21,4 @@ if (!result.success) {
 
 await Bun.write(new URL("../dist/package.json", import.meta.url), '{"type":"module"}\n')
 
-console.log(`built opencode-btw in ${root}`)
+console.log(`built opencode-bytheway in ${root}`)
