@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- align the standalone release workflow more closely with `opencode-planner` before the next publish attempt
+
 ## 0.1.1
 
 - rename the npm package to `opencode-bytheway` so the standalone repo can publish under a clean available name

@@ -18,7 +18,7 @@ Optional version pin:
 
 ```json
 {
-  "plugin": ["opencode-bytheway@0.1.1"]
+  "plugin": ["opencode-bytheway@0.1.2"]
 }
 ```
 
@@ -57,6 +57,6 @@ For local OpenCode testing, point your plugin config at this repository path.
 Example:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
