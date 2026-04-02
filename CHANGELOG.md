@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- remove `/btw_popup` and its popup-dialog runtime so the plugin focuses on temporary side sessions
+- load active bytheway sessions cleanly, keep the sidebar indicator aligned with the active temp session, and improve command-family overrides for local installs
+
 ## 0.1.5
 
 - align the runtime plugin id with the published package name and add direct server-entry coverage

@@ -1,6 +1,6 @@
 # opencode-bytheway
 
-OpenCode TUI plugin that adds side-session and popup "by the way" workflows.
+OpenCode TUI plugin that adds temporary "by the way" side-session workflows.
 
 A proof-of-concept plugin repository modeled after `opencode-planner`, but for the `/btw` workflow family.
 
@@ -18,7 +18,7 @@ Optional version pin:
 
 ```json
 {
-  "plugin": ["opencode-bytheway@0.1.5"]
+  "plugin": ["opencode-bytheway@0.2.0"]
 }
 ```
 
@@ -30,19 +30,17 @@ Optional command-family override:
 OPENCODE_BYTHEWAY_COMMAND=aside
 ```
 
-With that env var set, the plugin exposes `/aside`, `/aside_end`, and `/aside_popup` instead of the default `/btw` family.
+With that env var set, the plugin exposes `/aside` and `/aside_end` instead of the default `/btw` family.
 
 ## Commands
 
 - `/btw`: open a temporary btw side session in the same terminal, preserving context from the current session
 - `/btw_end`: return to the original session and remove the temporary btw session
-- `/btw_popup`: ask a one-off popup question without navigating away from the current session
 
 ## User experience
 
 - `/btw` is for branching off in the same terminal while keeping your main session intact
 - `/btw_end` is the clear way back from that temporary side session
-- `/btw_popup` is the fast one-off alternative when you do not want navigation
 - nested btw sessions are blocked to avoid stacked temporary contexts
 
 ## Local development
@@ -91,6 +89,6 @@ Point at the package root, not `index.js` or `dist/tui.js` directly.
 Example:
 
 ```bash
-git tag v0.1.4
-git push origin v0.1.4
+git tag v0.2.0
+git push origin v0.2.0
 ```

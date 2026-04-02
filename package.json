@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-bytheway",
-  "version": "0.1.5",
-  "description": "OpenCode TUI plugin that adds /btw side sessions and /btw_popup one-off context popups.",
+  "version": "0.2.0",
+  "description": "OpenCode TUI plugin that adds temporary /btw side sessions.",
   "author": "Tim Richardson",
   "homepage": "https://github.com/timrichardson/opencode-btw",
   "bugs": {
@@ -43,7 +43,6 @@
     "@opencode-ai/plugin": "^1.3.9",
     "@opentui/core": "0.1.92",
     "@opentui/solid": "0.1.92",
-    "clipboardy": "4.0.0",
     "solid-js": "1.9.10"
   },
   "keywords": [
