@@ -18,7 +18,7 @@ Optional version pin:
 
 ```json
 {
-  "plugin": ["opencode-bytheway@0.2.0"]
+  "plugin": ["opencode-bytheway@0.2.1"]
 }
 ```
 
@@ -89,6 +89,6 @@ Point at the package root, not `index.js` or `dist/tui.js` directly.
 Example:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```

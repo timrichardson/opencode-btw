@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- publish the side-session-only release from the OIDC trusted publishing workflow
+
 ## 0.2.0
 
 - remove `/btw_popup` and its popup-dialog runtime so the plugin focuses on temporary side sessions

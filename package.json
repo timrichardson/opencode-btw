@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "opencode-bytheway",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OpenCode TUI plugin that adds temporary /btw side sessions.",
   "author": "Tim Richardson",
   "homepage": "https://github.com/timrichardson/opencode-btw",
