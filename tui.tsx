@@ -1,6 +1,4 @@
-/** @jsx h */
-import h from "solid-js/h";
-import { TextAttributes } from "@opentui/core";
+import { SyntaxStyle, TextAttributes } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid";
 import type {
   TuiPlugin,
@@ -99,11 +97,13 @@ const ui = {
   muted: "#a5a5a5",
   accent: "#5f87ff",
   panel: "#2a2a2a",
+  notice: "#1f2b3d",
   danger: "#ff7b72",
 };
 
 const key = "opencode-bytheway.active";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const syntax = SyntaxStyle.create();
 
 const isbtw = (value: unknown): value is Btw => {
   if (!value || typeof value !== "object") return false;
@@ -111,6 +111,16 @@ const isbtw = (value: unknown): value is Btw => {
   if (!("temp" in value) || typeof value.temp !== "string") return false;
   return true;
 };
+
+export const indicator = (sessionID: string | undefined, state?: Btw) => {
+  if (!sessionID || !state || state.temp !== sessionID) return;
+  return {
+    title: `${slash(openname())} session active`,
+    detail: `Run ${slash(endname())} to return`,
+  };
+};
+
+export const sessiontitle = () => `${slash(openname())} session`;
 
 const msg = (err: unknown) => {
   if (err instanceof Error) return err.message;
@@ -372,6 +382,7 @@ const Body = (props: {
         <scrollbox height={body} width={cols} paddingRight={2}>
           <code
             filetype="markdown"
+            syntaxStyle={syntax}
             drawUnstyledText={false}
             streaming={true}
             content={text}
@@ -411,7 +422,19 @@ const tui: TuiPlugin = async (api) => {
   const current = () => {
     const route = api.route.current;
     if (route.name !== "session") return;
-    return route.params?.sessionID;
+    const sessionID = route.params?.sessionID;
+    if (typeof sessionID !== "string") return;
+    return sessionID;
+  };
+
+  const origin = async () => {
+    const sessionID = current();
+    if (sessionID) return sessionID;
+
+    const next = await api.client.session.create({});
+    if (next.error || !next.data?.id)
+      throw next.error ?? new Error("Failed to create a new session.");
+    return next.data.id;
   };
 
   const render = (item: Run) => {
@@ -908,6 +931,13 @@ const tui: TuiPlugin = async (api) => {
     return next.data.id;
   };
 
+  const label = async (sessionID: string) => {
+    const next = await api.client.session
+      .update({ sessionID, title: sessiontitle() })
+      .catch(() => undefined);
+    return !next?.error;
+  };
+
   const enter = async () => {
     if (run && busy(run)) {
       api.ui.toast({
@@ -919,14 +949,7 @@ const tui: TuiPlugin = async (api) => {
 
     const sessionID = current();
     const state = load();
-    if (typeof sessionID !== "string") {
-      api.ui.toast({
-        variant: "warning",
-        message: `${slash(openname())} is only available inside a session.`,
-      });
-      return;
-    }
-    if (state?.temp === sessionID) {
+    if (state && state.temp === sessionID) {
       api.ui.toast({
         variant: "warning",
         message: `Already inside a ${slash(openname())} session. Run ${slash(endname())} to return.`,
@@ -942,7 +965,9 @@ const tui: TuiPlugin = async (api) => {
     }
 
     try {
+      const sessionID = await origin();
       const temp = await fork(sessionID);
+      await label(temp);
       save({ origin: sessionID, temp });
       api.route.navigate("session", { sessionID: temp });
       const DialogAlert = api.ui.DialogAlert;
@@ -1001,11 +1026,40 @@ const tui: TuiPlugin = async (api) => {
     stop(run, false);
   });
 
+  api.slots.register({
+    order: 60,
+    slots: {
+      sidebar_content(_ctx, value) {
+        const item = indicator(value.session_id, load());
+        if (!item) return null;
+
+        return (
+          <box
+            border
+            borderColor={ui.accent}
+            backgroundColor={ui.notice}
+            paddingTop={1}
+            paddingBottom={1}
+            paddingLeft={2}
+            paddingRight={2}
+            flexDirection="column"
+            gap={1}
+          >
+            <text fg={ui.accent} attributes={TextAttributes.BOLD}>
+              {item.title}
+            </text>
+            <text fg={ui.muted}>{item.detail}</text>
+          </box>
+        );
+      },
+    },
+  });
+
   api.command.register(() => {
     const sessionID = current();
     const state = load();
     const active = Boolean(state);
-    const inbtw = Boolean(state && state.temp === sessionID);
+    const inbtw = Boolean(indicator(sessionID, state));
 
     return [
       {
@@ -1016,7 +1070,7 @@ const tui: TuiPlugin = async (api) => {
         slash: {
           name: openname(),
         },
-        hidden: typeof sessionID !== "string" || active,
+        hidden: active,
         onSelect: () => {
           void enter();
         },
@@ -1050,7 +1104,7 @@ const tui: TuiPlugin = async (api) => {
         slash: {
           name: endname(),
         },
-        hidden: typeof sessionID !== "string" || !active,
+        hidden: !active,
         suggested: inbtw,
         onSelect: () => {
           void end();

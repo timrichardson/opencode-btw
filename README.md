@@ -54,7 +54,9 @@ bun run test
 npm pack --dry-run
 ```
 
-For local OpenCode testing, point your plugin config at this repository path after running `bun run build`, since the TUI entrypoint is generated into `dist/`.
+For local OpenCode testing, point your plugin config at this repository path after running `bun run build`.
+
+OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`, so a mixed server/TUI package like this one needs the package root listed in both configs when testing locally.
 
 Example `opencode.json` entry when the repository lives at `~/projects/opencode-btw-plugin`:
 
@@ -67,6 +69,18 @@ Example `opencode.json` entry when the repository lives at `~/projects/opencode-
 ```
 
 Use an absolute `file://` path in the config. Do not rely on `~` or `$USER` expansion inside `opencode.json`, since config values are not shell-expanded.
+
+Example `tui.json` entry for the slash commands:
+
+```json
+{
+  "plugin": [
+    "file:///home/{USER}/projects/opencode-btw-plugin"
+  ]
+}
+```
+
+Point at the package root, not `index.js` or `dist/tui.js` directly.
 
 ## Release
 

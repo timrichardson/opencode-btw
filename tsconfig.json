@@ -3,8 +3,8 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "jsx": "react",
-    "jsxFactory": "h",
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "types": ["bun"]
   }
 }

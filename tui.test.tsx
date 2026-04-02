@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { testRender } from "@opentui/solid"
 import serverPlugin from "./index.js"
-import plugin, { debug, plain, wrap } from "./tui"
+import plugin, { debug, indicator, plain, sessiontitle, wrap } from "./tui"
 
 function tick() {
   return new Promise((resolve) => setTimeout(resolve, 0))
@@ -17,6 +18,9 @@ function cmd(rows: any[], value: string) {
 
 function setup(input?: {
   session?: boolean
+  createError?: Error
+  createIDs?: string[]
+  updateError?: Error
   promptError?: Error
   forkError?: Error
   forkDelays?: number[]
@@ -33,11 +37,15 @@ function setup(input?: {
   const views: any[] = []
   const nav: any[] = []
   const reg: Array<() => any[]> = []
+  const slots: any[] = []
   const handlers = new Map<string, Array<(evt: any) => void>>()
   const dispose: Array<() => void | Promise<void>> = []
   const kv = new Map<string, unknown>()
+  let creates = 0
   let forks = 0
   let messages = 0
+  let created: Record<string, unknown> | undefined
+  let updated: Record<string, unknown> | undefined
   let fork: Record<string, unknown> | undefined
   let sent: Record<string, unknown> | undefined
   let route: any = input?.session === false ? { name: "home" } : { name: "session", params: { sessionID: "ses_main" } }
@@ -67,6 +75,12 @@ function setup(input?: {
         return () => {}
       },
     },
+    slots: {
+      register(input: unknown) {
+        slots.push(input)
+        return `slot:${slots.length}`
+      },
+    },
     kv: {
       ready: true,
       get(key: string, fallback?: unknown) {
@@ -86,7 +100,15 @@ function setup(input?: {
       DialogAlert: (props: Record<string, unknown>) => ({ type: "alert", props }),
       dialog: {
         replace(render: () => unknown) {
-          views.push(render())
+          try {
+            views.push(render())
+          } catch (error) {
+            if (error instanceof Error && error.message === "No renderer found") {
+              views.push({ type: "renderable" })
+              return
+            }
+            throw error
+          }
         },
         clear() {},
         setSize() {},
@@ -115,6 +137,14 @@ function setup(input?: {
     },
     client: {
       session: {
+        async create(args: Record<string, unknown>) {
+          calls.push("create")
+          created = args
+          const id = input?.createIDs?.[creates] ?? "ses_main"
+          creates += 1
+          if (input?.createError) return { error: input.createError }
+          return { data: { id } }
+        },
         async fork(args: Record<string, unknown>) {
           calls.push("fork")
           fork = args
@@ -124,6 +154,12 @@ function setup(input?: {
           if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
           if (input?.forkError) return { error: input.forkError }
           return { data: { id } }
+        },
+        async update(args: Record<string, unknown>) {
+          calls.push("update")
+          updated = args
+          if (input?.updateError) return { error: input.updateError }
+          return { data: undefined }
         },
         async promptAsync(args: Record<string, unknown>) {
           calls.push("promptAsync")
@@ -239,12 +275,17 @@ function setup(input?: {
   return {
     api,
     calls,
+    created: () => created,
     fork: () => fork,
     kv,
     looked,
     nav,
+    updated: () => updated,
     rows() {
       return reg.flatMap((cb) => cb())
+    },
+    slot(name: string) {
+      return slots.find((item) => item?.slots?.[name])
     },
     toasts,
     views,
@@ -292,6 +333,42 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "btw_end" })
   })
 
+  test("registers a sidebar indicator slot", async () => {
+    const { api, slot } = setup()
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    expect(slot("sidebar_content")).toBeTruthy()
+  })
+
+  test("renders the sidebar indicator without DOM globals", async () => {
+    const { api, kv, slot } = setup()
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw" })
+    const entry = slot("sidebar_content")
+
+    expect(entry).toBeTruthy()
+
+    const rendered = await testRender(() =>
+      entry?.slots?.sidebar_content({}, { session_id: "ses_btw" }),
+    )
+
+    await rendered.renderOnce()
+
+    expect(rendered.captureCharFrame()).toContain("/btw session active")
+    expect(rendered.captureCharFrame()).toContain("Run /btw_end to return")
+  })
+
+  test("only shows the sidebar indicator for the active btw temp session", () => {
+    expect(indicator("ses_main", undefined)).toBeUndefined()
+    expect(indicator("ses_main", { origin: "ses_root", temp: "ses_btw" } as any)).toBeUndefined()
+    expect(indicator("ses_btw", { origin: "ses_main", temp: "ses_btw" } as any)).toEqual({
+      title: "/btw session active",
+      detail: "Run /btw_end to return",
+    })
+    expect(sessiontitle()).toBe("/btw session")
+  })
+
   test("derives slash command names from OPENCODE_BYTHEWAY_COMMAND", async () => {
     const prev = env()["OPENCODE_BYTHEWAY_COMMAND"]
     env()["OPENCODE_BYTHEWAY_COMMAND"] = "aside"
@@ -303,6 +380,11 @@ describe("opencode-bytheway tui plugin", () => {
       expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
       expect(cmd(rows(), "btw.popup")?.slash).toEqual({ name: "aside_popup" })
       expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside_end" })
+      expect(indicator("ses_btw", { origin: "ses_main", temp: "ses_btw" } as any)).toEqual({
+        title: "/aside session active",
+        detail: "Run /aside_end to return",
+      })
+      expect(sessiontitle()).toBe("/aside session")
 
       cmd(rows(), "btw.open").onSelect()
       await tick()
@@ -315,13 +397,51 @@ describe("opencode-bytheway tui plugin", () => {
     }
   })
 
-  test("guards when not inside a session", async () => {
+  test("keeps btw_popup hidden when not inside a session", async () => {
     const { api, rows, toasts } = setup({ session: false })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    expect(cmd(rows(), "btw.open")?.hidden).toBe(true)
+    expect(cmd(rows(), "btw.open")?.hidden).toBe(false)
     expect(cmd(rows(), "btw.popup")?.hidden).toBe(true)
     expect(cmd(rows(), "btw.end")?.hidden).toBe(true)
+  })
+
+  test("creates an origin session when opening /btw from home", async () => {
+    const { api, calls, created, kv, nav, rows, updated } = setup({ session: false })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+
+    expect(created()).toEqual({})
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
+    expect(calls).toEqual(["create", "messages", "fork", "update"])
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+  })
+
+  test("continues into /btw when session title labeling fails", async () => {
+    const { api, calls, kv, nav, rows, updated } = setup({ updateError: new Error("update failed") })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
+    expect(calls).toEqual(["messages", "fork", "update"])
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+  })
+
+  test("shows an error toast when creating the origin session fails", async () => {
+    const { api, nav, rows, toasts } = setup({ session: false, createError: new Error("create failed") })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+
+    expect(toasts.at(-1)).toEqual({ variant: "error", message: "create failed" })
+    expect(nav).toEqual([])
   })
 
   test("streams async reply and deletes fork on completion", async () => {
@@ -662,13 +782,14 @@ describe("opencode-bytheway tui plugin", () => {
   })
 
   test("opens a btw side session and records origin/temp", async () => {
-    const { api, calls, kv, nav, rows } = setup()
+    const { api, calls, kv, nav, rows, updated } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     cmd(rows(), "btw.open").onSelect()
     await tick()
 
-    expect(calls).toEqual(["messages", "fork"])
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
+    expect(calls).toEqual(["messages", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
     expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
   })
@@ -719,7 +840,7 @@ describe("opencode-bytheway tui plugin", () => {
     cmd(rows(), "btw.end").onSelect()
     await tick()
 
-    expect(calls).toEqual(["messages", "fork", "delete"])
+    expect(calls).toEqual(["messages", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
@@ -739,7 +860,7 @@ describe("opencode-bytheway tui plugin", () => {
     cmd(rows(), "btw.end").onSelect()
     await tick()
 
-    expect(calls).toEqual(["messages", "fork", "delete"])
+    expect(calls).toEqual(["messages", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
@@ -763,7 +884,7 @@ describe("opencode-bytheway tui plugin", () => {
     cmd(rows(), "btw.end").onSelect()
     await tick()
 
-    expect(calls).toEqual(["messages", "fork", "delete"])
+    expect(calls).toEqual(["messages", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },

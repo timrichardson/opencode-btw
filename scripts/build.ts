@@ -1,4 +1,5 @@
 import { fileURLToPath } from "url"
+import solidPlugin from "@opentui/solid/bun-plugin"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
 const entry = fileURLToPath(new URL("../tui.tsx", import.meta.url))
@@ -11,7 +12,8 @@ const result = await Bun.build({
   format: "esm",
   target: "bun",
   packages: "external",
-  external: ["solid-js", "solid-js/h"],
+  external: ["solid-js"],
+  plugins: [solidPlugin],
 })
 
 if (!result.success) {
