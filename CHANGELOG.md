@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- restore `/btw` to TUI-only ownership and move the seeded server-side entrypoint to `/experimental-btw`
+
 ## 0.2.1
 
 - publish the side-session-only release from the OIDC trusted publishing workflow

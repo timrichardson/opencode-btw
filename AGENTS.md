@@ -4,12 +4,12 @@
 
 This repository contains the standalone `opencode-bytheway` OpenCode plugin.
 
-It provides the `/btw` and `/btw_end` workflows for temporary side sessions.
+It provides the `/btw`, `/btw_merge`, and `/btw_end` workflows for temporary side sessions, plus an experimental server-side `/experimental-btw` entrypoint.
 
 ## Important Files
 
-- `index.js`: server-side plugin entry. Defines the plugin `id` and the local `btw_status` development tool.
-- `tui.tsx`: TUI plugin implementation. This is where slash commands, session state, and navigation live.
+- `index.js`: server-side plugin entry. Defines the plugin `id`, the local `btw_status` development tool, and the experimental `/experimental-btw` command.
+- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw_merge`, and `/btw_end` slash commands, session state, and navigation live.
 - `tui.test.tsx`: Bun test coverage for the TUI behavior.
 - `scripts/build.ts`: builds `tui.tsx` into `dist/tui.js`.
 - `dist/tui.js`: built artifact published by the package. Rebuild it after changing `tui.tsx`.

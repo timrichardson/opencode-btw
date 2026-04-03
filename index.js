@@ -15,8 +15,8 @@ const statuscmd = {
   template: "Call the btw_status tool and return its output.",
 }
 
-const opencmd = {
-  description: "Open a temporary by-the-way session, optionally with an initial prompt",
+const experimentalcmd = {
+  description: "Experimental: open a temporary by-the-way session and optionally seed it with an initial prompt",
   agent: "general",
   template: [
     "Call the btw_open tool.",
@@ -103,7 +103,7 @@ export default {
     },
     async config(cfg) {
       cfg.command = {
-        [openname()]: opencmd,
+        "experimental-btw": experimentalcmd,
         "btw-status": statuscmd,
         ...cfg.command,
       }

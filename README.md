@@ -6,9 +6,11 @@ A proof-of-concept plugin to implement something like Claude Code's "btw" featur
 
 `/btw` is queued like any other OpenCode command when the current session is busy.
 
-You can either:
+Normal usage:
 - run `/btw` and then type in the temp session
-- run `/btw your prompt here` to open the temp session and immediately seed it with that prompt
+
+Experimental server-side entrypoint:
+- run `/experimental-btw your prompt here` to open the temp session and immediately seed it with that prompt
 
 No nesting.
 
@@ -22,7 +24,7 @@ OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from
 
 For `/btw`, `/btw_merge`, and `/btw_end`, list this package in `tui.json[c]`.
 List it in `opencode.json[c]` too if you want:
-- `/btw some prompt` to seed the temp session immediately
+- `/experimental-btw some prompt` to seed the temp session immediately
 - the `btw-status` diagnostic command
 
 Example `opencode.jsonc`:
@@ -45,15 +47,15 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.2.1"]
+  "plugin": ["opencode-bytheway@0.2.2"]
 }
 ```
 
 Restart OpenCode after installing or updating the plugin.
 
 Troubleshooting:
-- if `btw-status` appears but `/btw` does not, the package is loaded in `opencode.json[c]` but missing from `tui.json[c]`
-- if `/btw` works but `/btw some prompt` or `btw-status` does not, the package is loaded in `tui.json[c]` but missing from `opencode.json[c]`
+- if `btw-status` or `/experimental-btw` appears but `/btw` does not, the package is loaded in `opencode.json[c]` but missing from `tui.json[c]`
+- if `/btw` works but `/experimental-btw` or `btw-status` does not, the package is loaded in `tui.json[c]` but missing from `opencode.json[c]`
 - reload or restart OpenCode after changing either config
 
 Optional command-family override:
@@ -62,14 +64,15 @@ Optional command-family override:
 OPENCODE_BYTHEWAY_COMMAND=aside
 ```
 
-With that env var set, the plugin exposes `/aside`, `/aside_merge`, and `/aside_end` instead of the default `/btw` family.
+With that env var set, the TUI plugin exposes `/aside`, `/aside_merge`, and `/aside_end` instead of the default `/btw` family.
+The server-side `/experimental-btw` command stays fixed.
 
 ## Commands
 
 - `/btw`: open a temporary btw side session in the same terminal, preserving context from the current session
-- `/btw your prompt here`: open the temporary session and immediately send that prompt into it
 - `/btw_merge`: append plain user/assistant text from the temporary session back into the original session, then close the temporary session
 - `/btw_end`: return to the original session and remove the temporary btw session without carrying text back
+- `/experimental-btw your prompt here`: experimental server-side entrypoint that opens a temporary session and immediately sends that prompt into it
 
 ## User experience
 
@@ -88,12 +91,12 @@ npm pack --dry-run
 ```
 
 For local OpenCode testing, point `tui.json[c]` at this repository path after running `bun run build`.
-Also point `opencode.json[c]` at it if you want `/btw some prompt` support or the `btw-status` diagnostic command.
+Also point `opencode.json[c]` at it if you want `/experimental-btw` support or the `btw-status` diagnostic command.
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
 When testing locally, put the package root in `tui.json[c]` for `/btw`, `/btw_merge`, and `/btw_end`.
-Add the same package root to `opencode.json[c]` if you also want `/btw some prompt` support or the `btw-status` diagnostic command.
+Add the same package root to `opencode.json[c]` if you also want `/experimental-btw` support or the `btw-status` diagnostic command.
 
 Example `opencode.json` entry when the repository lives at `~/projects/opencode-btw-plugin`:
 
@@ -127,10 +130,11 @@ Point at the package root, not `index.js` or `dist/tui.js` directly.
 - verify both plugin halves load after install:
   - server: `btw-status`
   - TUI: `/btw`, `/btw_merge`, `/btw_end`
+  - optional experimental server command: `/experimental-btw`
 
 Example:
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.2.2
+git push origin v0.2.2
 ```

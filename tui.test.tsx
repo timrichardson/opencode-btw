@@ -271,7 +271,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(serverPlugin.id).toBe("opencode-bytheway")
   })
 
-  test("registers btw_status and injects the btw-status command", async () => {
+  test("registers btw_status and injects the experimental-btw command", async () => {
     const server = await serverPlugin.server()
     const cfg = { command: { existing: { description: "keep" } } } as any
 
@@ -281,8 +281,8 @@ describe("opencode-bytheway tui plugin", () => {
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_main" })).toBe(
       "opencode-bytheway is loaded.\nsession: ses_main",
     )
-    expect(cfg.command.btw).toEqual({
-      description: "Open a temporary by-the-way session, optionally with an initial prompt",
+    expect(cfg.command["experimental-btw"]).toEqual({
+      description: "Experimental: open a temporary by-the-way session and optionally seed it with an initial prompt",
       agent: "general",
       template: [
         "Call the btw_open tool.",
@@ -291,6 +291,7 @@ describe("opencode-bytheway tui plugin", () => {
         "After the tool call, do not add any extra text.",
       ].join(" "),
     })
+    expect(cfg.command.btw).toBeUndefined()
     expect(cfg.command["btw-status"]).toEqual({
       description: "Check whether the opencode-bytheway plugin is loaded",
       agent: "general",
@@ -386,9 +387,24 @@ describe("opencode-bytheway tui plugin", () => {
     env()["OPENCODE_BYTHEWAY_COMMAND"] = "aside"
 
     try {
+      const server = await serverPlugin.server()
+      const cfg = { command: {} } as any
+      await server.config(cfg)
+
       const { api, rows, views } = setup()
       await plugin.tui(api, undefined, { state: "first" } as any)
 
+      expect(cfg.command["experimental-btw"]).toEqual({
+        description: "Experimental: open a temporary by-the-way session and optionally seed it with an initial prompt",
+        agent: "general",
+        template: [
+          "Call the btw_open tool.",
+          "Pass the full command arguments as the prompt field exactly as written.",
+          "If there are no arguments, pass an empty string.",
+          "After the tool call, do not add any extra text.",
+        ].join(" "),
+      })
+      expect(cfg.command.aside).toBeUndefined()
       expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
       expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "aside_merge" })
       expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside_end" })
