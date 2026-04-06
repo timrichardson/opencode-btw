@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
+import { readFileSync, rmSync, mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import serverPlugin from "./index.js"
 import plugin, { indicator, sessiontitle } from "./tui"
 
@@ -277,18 +280,35 @@ describe("opencode-bytheway tui plugin", () => {
 
     await server.config(cfg)
 
-    expect(Object.keys(server.tool)).toEqual(["btw_status", "btw_open"])
+    expect(Object.keys(server.tool)).toEqual([
+      "btw_status",
+      "opencode_bytheway_plugin_open",
+      "opencode_bytheway_plugin_debug_open",
+    ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_main" })).toBe(
       "opencode-bytheway is loaded.\nsession: ses_main",
     )
     expect(cfg.command["experimental-btw"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and optionally seed it with an initial prompt",
       agent: "general",
+      subtask: false,
       template: [
-        "Call the btw_open tool.",
+        "Call the opencode_bytheway_plugin_open tool.",
         "Pass the full command arguments as the prompt field exactly as written.",
         "If there are no arguments, pass an empty string.",
-        "After the tool call, do not add any extra text.",
+        "Then return only the plain text content from the tool result.",
+        "Do not return an object, JSON, markdown fencing, or text like [object Object].",
+      ].join(" "),
+    })
+    expect(cfg.command["experimental-btw-debug"]).toEqual({
+      description: "Debug: open a temporary by-the-way session and write prompt diagnostics to a file",
+      agent: "general",
+      subtask: false,
+      template: [
+        "Call the opencode_bytheway_plugin_debug_open tool.",
+        "Pass the full command arguments as the prompt field exactly as written.",
+        "If there are no arguments, pass an empty string.",
+        "Return the exact tool output verbatim.",
       ].join(" "),
     })
     expect(cfg.command.btw).toBeUndefined()
@@ -300,7 +320,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cfg.command.existing).toEqual({ description: "keep" })
   })
 
-  test("btw_open tool forks a temp session and seeds the initial prompt", async () => {
+  test("opencode_bytheway_plugin_open tool forks a temp session, selects it, and returns the seeded reply", async () => {
     const client: any = {
       session: {
         async messages() {
@@ -317,12 +337,20 @@ describe("opencode-bytheway tui plugin", () => {
           expect(args).toEqual({ sessionID: "ses_btw", title: "/btw session" })
           return { data: undefined }
         },
-        async promptAsync(args: Record<string, unknown>) {
+        async prompt(args: Record<string, unknown>) {
           expect(args).toEqual({
             sessionID: "ses_btw",
             parts: [{ type: "text", text: "investigate this" }],
           })
-          return { data: undefined }
+          return {
+            data: {
+              info: { id: "msg_reply", role: "assistant" },
+              parts: [
+                { type: "reasoning", text: "hidden" },
+                { type: "text", text: "  ANZAC stands for Australian and New Zealand Army Corps.  " },
+              ],
+            },
+          }
         },
       },
       tui: {
@@ -334,7 +362,129 @@ describe("opencode-bytheway tui plugin", () => {
     }
 
     const server = await serverPlugin.server({ client })
-    await expect(server.tool.btw_open.execute({ prompt: "investigate this" }, { sessionID: "ses_main" })).resolves.toBe("")
+    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "investigate this" }, { sessionID: "ses_main" })).resolves.toBe(
+      "ANZAC stands for Australian and New Zealand Army Corps.",
+    )
+  })
+
+  test("opencode_bytheway_plugin_open tool stringifies structured prompt data when no plain text parts are available", async () => {
+    const client: any = {
+      session: {
+        async messages() {
+          return { data: [] }
+        },
+        async fork() {
+          return { data: { id: "ses_btw" } }
+        },
+        async update() {
+          return { data: undefined }
+        },
+        async prompt() {
+          return {
+            data: {
+              content: "ANZAC summary",
+            },
+          }
+        },
+      },
+      tui: {
+        async selectSession() {
+          return { data: true }
+        },
+      },
+    }
+
+    const server = await serverPlugin.server({ client })
+    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "investigate this" }, { sessionID: "ses_main" })).resolves.toBe(
+      "ANZAC summary",
+    )
+  })
+
+  test("opencode_bytheway_plugin_open tool extracts nested text from structured prompt data", async () => {
+    const client: any = {
+      session: {
+        async messages() {
+          return { data: [] }
+        },
+        async fork() {
+          return { data: { id: "ses_btw" } }
+        },
+        async update() {
+          return { data: undefined }
+        },
+        async prompt() {
+          return {
+            data: {
+              result: {
+                message: {
+                  content: [
+                    { type: "reasoning", text: "hidden" },
+                    { type: "text", text: "ANZAC usually refers to the Australian and New Zealand Army Corps." },
+                  ],
+                },
+              },
+            },
+          }
+        },
+      },
+      tui: {
+        async selectSession() {
+          return { data: true }
+        },
+      },
+    }
+
+    const server = await serverPlugin.server({ client })
+    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "investigate this" }, { sessionID: "ses_main" })).resolves.toBe(
+      "ANZAC usually refers to the Australian and New Zealand Army Corps.",
+    )
+  })
+
+  test("opencode_bytheway_plugin_debug_open tool writes diagnostics to a file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "opencode-btw-"))
+    const client: any = {
+      session: {
+        async messages() {
+          return { data: [] }
+        },
+        async fork() {
+          return { data: { id: "ses_btw" } }
+        },
+        async update() {
+          return { data: undefined }
+        },
+        async prompt() {
+          return {
+            data: {
+              info: { id: "msg_reply", role: "assistant" },
+              parts: [{ type: "text", text: "ANZAC reply" }],
+            },
+          }
+        },
+      },
+      tui: {
+        async selectSession() {
+          return { data: true }
+        },
+      },
+    }
+
+    try {
+      const server = await serverPlugin.server({ client })
+      const file = join(root, ".opencode", "bytheway-debug.json")
+      await expect(server.tool.opencode_bytheway_plugin_debug_open.execute({ prompt: "investigate this" }, {
+        sessionID: "ses_main",
+        directory: root,
+        worktree: root,
+      } as any)).resolves.toBe(`Wrote debug payload to ${file}`)
+
+      const parsed = JSON.parse(readFileSync(file, "utf8"))
+      expect(parsed.debug).toBe("opencode-bytheway.prompt")
+      expect(parsed.extracted).toBe("ANZAC reply")
+      expect(parsed.data.keys).toEqual(["info", "parts"])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   test("registers /btw, /btw_merge, and /btw_end slash commands", async () => {
@@ -397,11 +547,24 @@ describe("opencode-bytheway tui plugin", () => {
       expect(cfg.command["experimental-btw"]).toEqual({
         description: "Experimental: open a temporary by-the-way session and optionally seed it with an initial prompt",
         agent: "general",
+        subtask: false,
         template: [
-          "Call the btw_open tool.",
+          "Call the opencode_bytheway_plugin_open tool.",
           "Pass the full command arguments as the prompt field exactly as written.",
           "If there are no arguments, pass an empty string.",
-          "After the tool call, do not add any extra text.",
+          "Then return only the plain text content from the tool result.",
+          "Do not return an object, JSON, markdown fencing, or text like [object Object].",
+        ].join(" "),
+      })
+      expect(cfg.command["experimental-btw-debug"]).toEqual({
+        description: "Debug: open a temporary by-the-way session and write prompt diagnostics to a file",
+        agent: "general",
+        subtask: false,
+        template: [
+          "Call the opencode_bytheway_plugin_debug_open tool.",
+          "Pass the full command arguments as the prompt field exactly as written.",
+          "If there are no arguments, pass an empty string.",
+          "Return the exact tool output verbatim.",
         ].join(" "),
       })
       expect(cfg.command.aside).toBeUndefined()

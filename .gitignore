@@ -4,3 +4,5 @@ dist/
 .DS_Store
 .opencode/
 .serena/
+opencode.jsonc
+tui.jsonc

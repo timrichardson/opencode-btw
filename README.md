@@ -10,7 +10,7 @@ Normal usage:
 - run `/btw` and then type in the temp session
 
 Experimental server-side entrypoint:
-- run `/experimental-btw your prompt here` to open the temp session and immediately seed it with that prompt
+- run `/experimental-btw your prompt here` to open the temp session, seed it with that prompt, and return the reply
 
 No nesting.
 
@@ -72,7 +72,7 @@ The server-side `/experimental-btw` command stays fixed.
 - `/btw`: open a temporary btw side session in the same terminal, preserving context from the current session
 - `/btw_merge`: append plain user/assistant text from the temporary session back into the original session, then close the temporary session
 - `/btw_end`: return to the original session and remove the temporary btw session without carrying text back
-- `/experimental-btw your prompt here`: experimental server-side entrypoint that opens a temporary session and immediately sends that prompt into it
+- `/experimental-btw your prompt here`: experimental server-side entrypoint that opens a temporary session, immediately sends that prompt into it, and returns the reply
 
 ## User experience
 
@@ -92,6 +92,8 @@ npm pack --dry-run
 
 For local OpenCode testing, point `tui.json[c]` at this repository path after running `bun run build`.
 Also point `opencode.json[c]` at it if you want `/experimental-btw` support or the `btw-status` diagnostic command.
+
+After changing `tui.tsx`, run `bun run build` again before reopening or reloading OpenCode so the local plugin uses the updated `dist/tui.js`.
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
@@ -121,6 +123,9 @@ Example `tui.json` entry for the slash commands:
 ```
 
 Point at the package root, not `index.js` or `dist/tui.js` directly.
+
+These local `opencode.json[c]` and `tui.json[c]` files are convenient for faster iteration, but keep them untracked in your clone.
+Their absolute `file://` paths are machine-specific and should not be committed to the package repo.
 
 ## Release
 
