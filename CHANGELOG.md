@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4
+
+- refine the published package metadata description to better describe the Claude Code-inspired btw workflow
+
 ## 0.3.3
 
 - rename the remaining `/btw` slash-command family members to hyphenated forms: `/btw-merge` and `/btw-end`
