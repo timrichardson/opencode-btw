@@ -5,12 +5,14 @@ import serverPlugin from "./index.js"
 import plugin, { indicator, sessiontitle } from "./tui"
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
-const handoffFile = "/tmp/opencode-bytheway-handoff.json"
+const handoffFile = (originSessionID = "none") => `/tmp/opencode-bytheway-handoff-test-${originSessionID.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`
 
 const env = () =>
   (globalThis as typeof globalThis & {
     process?: { env?: Record<string, string | undefined> }
   }).process?.env ?? {}
+
+env()["OPENCODE_BYTHEWAY_HANDOFF_NAMESPACE"] = "test"
 
 function cmd(rows: any[], value: string) {
   return rows.find((row) => row.value === value)
@@ -58,6 +60,7 @@ function setup(input?: {
   promptResult?: unknown
   onPrompt?: (args: Record<string, unknown>) => void
 }) {
+  rmSync(handoffFile(input?.sessionID ?? "ses_main"), { force: true })
   const calls: string[] = []
   const toasts: Array<Record<string, unknown>> = []
   const views: any[] = []
@@ -314,7 +317,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(serverPlugin.id).toBe("opencode-bytheway")
   })
 
-  test("registers btw_status and injects the experimental-btw command", async () => {
+  test("registers btw_status and injects the btw-prompt command", async () => {
     const server = await serverPlugin.server()
     const cfg = { command: { existing: { description: "keep" } } } as any
 
@@ -325,12 +328,12 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_open",
       "opencode_bytheway_plugin_select_temp",
     ])
-    expect(await server.tool.btw_status.execute({}, { sessionID: "ses_main" })).toBe(
-      "opencode-bytheway is loaded.\nsession: ses_main",
+    expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
+      "opencode-bytheway is loaded.\nsession: ses_status",
     )
-    expect(cfg.command["experimental-btw"]).toEqual({
+    expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
-      template: "/experimental-btw",
+      template: "/btw-prompt",
     })
     expect(cfg.command.btw).toBeUndefined()
     expect(cfg.command["btw-status"]).toEqual({
@@ -346,7 +349,7 @@ describe("opencode-bytheway tui plugin", () => {
         async showToast(args: Record<string, unknown>) {
           expect(args).toEqual({
             title: "opencode-bytheway",
-            message: "opencode-bytheway is loaded.\nsession: ses_main",
+            message: "opencode-bytheway is loaded.\nsession: ses_status",
             variant: "info",
             duration: 6000,
           })
@@ -357,162 +360,108 @@ describe("opencode-bytheway tui plugin", () => {
 
     const server = await serverPlugin.server({ client })
     const hook = server["command.execute.before"]
-    await expect(hook?.({ command: "btw-status", sessionID: "ses_main", arguments: "" }, { parts: [] })).rejects.toThrow(
+    await expect(hook?.({ command: "btw-status", sessionID: "ses_status", arguments: "" }, { parts: [] })).rejects.toThrow(
       "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__",
     )
   })
 
-  test("opencode_bytheway_plugin_open tool creates a fresh temp session, copies context, writes the prompt handoff, and returns no origin-session text", async () => {
-    rmSync(handoffFile, { force: true })
+  test("opencode_bytheway_plugin_open tool writes the prompt handoff and triggers btw.open in the TUI", async () => {
+    rmSync(handoffFile("ses_exp_server_open"), { force: true })
     const client: any = {
-      session: {
-        async messages() {
-          return {
-            data: [
-              { info: { role: "user" }, parts: [{ type: "text", text: "Context question" }] },
-              { info: { role: "assistant" }, parts: [{ type: "text", text: "Context answer" }] },
-            ],
-          }
-        },
-        async create() {
-          return { data: { id: "ses_btw" } }
-        },
-        async update(args: Record<string, unknown>) {
-          expect(args).toEqual({ sessionID: "ses_btw", title: "/btw experimental session" })
-          return { data: undefined }
-        },
-        async prompt(args: Record<string, unknown>) {
+      tui: {
+        async publish(args: Record<string, unknown>) {
           expect(args).toEqual({
-            path: { id: "ses_btw" },
             body: {
-              noReply: true,
-              parts: [{ type: "text", text: [
-                "Copied plain-text context from the original session.",
-                "Only user and assistant text is included below. Tool calls and hidden reasoning are omitted.",
-                "Use it as conversation context for the next prompt.",
-                "",
-                "User:\nContext question\n\nAssistant:\nContext answer",
-              ].join("\n") }],
+              type: "tui.command.execute",
+              properties: { command: "btw.open" },
             },
           })
-          return { data: { info: { id: "msg_ctx", role: "user" }, parts: [] } }
+          return { data: true }
         },
       },
     }
 
     const server = await serverPlugin.server({ client })
-    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "investigate this" }, { sessionID: "ses_main" })).resolves.toBe("")
-    expect(JSON.parse(readFileSync(handoffFile, "utf8"))).toMatchObject({
+    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "investigate this" }, { sessionID: "ses_exp_server_open" })).resolves.toBe("")
+    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_open"), "utf8"))).toMatchObject({
       type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_main",
-      tempSessionID: "ses_btw",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_exp_server_open",
       prompt: "investigate this",
     })
-    rmSync(handoffFile, { force: true })
+    rmSync(handoffFile("ses_exp_server_open"), { force: true })
   })
 
   test("opencode_bytheway_plugin_open tool preserves the user prompt exactly in the handoff file", async () => {
-    rmSync(handoffFile, { force: true })
+    rmSync(handoffFile("ses_exp_server_prompt"), { force: true })
     const client: any = {
-      session: {
-        async messages() {
-          return { data: [] }
-        },
-        async create() {
-          return { data: { id: "ses_btw" } }
-        },
-        async update() {
+      tui: {
+        async publish() {
           return { data: true }
         },
       },
     }
 
     const server = await serverPlugin.server({ client })
-    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "  investigate this  " }, { sessionID: "ses_main" })).resolves.toBe("")
-    expect(JSON.parse(readFileSync(handoffFile, "utf8"))).toMatchObject({
+    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "  investigate this  " }, { sessionID: "ses_exp_server_prompt" })).resolves.toBe("")
+    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_prompt"), "utf8"))).toMatchObject({
       type: "experimental-btw",
+      mode: "btw.open",
       prompt: "  investigate this  ",
     })
-    rmSync(handoffFile, { force: true })
+    rmSync(handoffFile("ses_exp_server_prompt"), { force: true })
   })
 
   test("opencode_bytheway_plugin_open tool writes an empty prompt handoff when no prompt is provided", async () => {
-    rmSync(handoffFile, { force: true })
+    rmSync(handoffFile("ses_exp_server_empty"), { force: true })
     const client: any = {
-      session: {
-        async messages() {
-          return { data: [] }
-        },
-        async create() {
-          return { data: { id: "ses_btw" } }
-        },
-        async update() {
+      tui: {
+        async publish() {
           return { data: true }
         },
       },
     }
 
     const server = await serverPlugin.server({ client })
-    await expect(server.tool.opencode_bytheway_plugin_open.execute({}, { sessionID: "ses_main" })).resolves.toBe("")
-    expect(JSON.parse(readFileSync(handoffFile, "utf8"))).toMatchObject({
+    await expect(server.tool.opencode_bytheway_plugin_open.execute({}, { sessionID: "ses_exp_server_empty" })).resolves.toBe("")
+    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_empty"), "utf8"))).toMatchObject({
       type: "experimental-btw",
+      mode: "btw.open",
       prompt: "",
     })
-    rmSync(handoffFile, { force: true })
+    rmSync(handoffFile("ses_exp_server_empty"), { force: true })
   })
 
-  test("experimental-btw command executes directly in command.execute.before", async () => {
-    rmSync(handoffFile, { force: true })
+  test("btw-prompt command executes directly in command.execute.before", async () => {
+    rmSync(handoffFile("ses_exp_server_hook"), { force: true })
     const client: any = {
-      session: {
-        async messages() {
-          return {
-            data: [
-              { info: { role: "user" }, parts: [{ type: "text", text: "Context question" }] },
-              { info: { role: "assistant" }, parts: [{ type: "text", text: "Context answer" }] },
-            ],
-          }
-        },
-        async create() {
-          return { data: { id: "ses_btw" } }
-        },
-        async update(args: Record<string, unknown>) {
-          expect(args).toEqual({ sessionID: "ses_btw", title: "/btw experimental session" })
-          return { data: undefined }
-        },
-        async prompt(args: Record<string, unknown>) {
+      tui: {
+        async publish(args: Record<string, unknown>) {
           expect(args).toEqual({
-            path: { id: "ses_btw" },
             body: {
-              noReply: true,
-              parts: [{ type: "text", text: [
-                "Copied plain-text context from the original session.",
-                "Only user and assistant text is included below. Tool calls and hidden reasoning are omitted.",
-                "Use it as conversation context for the next prompt.",
-                "",
-                "User:\nContext question\n\nAssistant:\nContext answer",
-              ].join("\n") }],
+              type: "tui.command.execute",
+              properties: { command: "btw.open" },
             },
           })
-          return { data: { info: { id: "msg_ctx", role: "user" }, parts: [] } }
+          return { data: true }
         },
       },
     }
 
     const server = await serverPlugin.server({ client })
     const hook = server["command.execute.before"]
-    await expect(hook?.({ command: "experimental-btw", sessionID: "ses_main", arguments: "investigate this" }, { parts: [] })).rejects.toThrow(
+    await expect(hook?.({ command: "btw-prompt", sessionID: "ses_exp_server_hook", arguments: "investigate this" }, { parts: [] })).rejects.toThrow(
       "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__",
     )
-    expect(JSON.parse(readFileSync(handoffFile, "utf8"))).toMatchObject({
+    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_hook"), "utf8"))).toMatchObject({
       type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_main",
-      tempSessionID: "ses_btw",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_exp_server_hook",
       prompt: "investigate this",
     })
-    rmSync(handoffFile, { force: true })
+    rmSync(handoffFile("ses_exp_server_hook"), { force: true })
   })
 
   test("opencode_bytheway_plugin_select_temp selects the provided session", async () => {
@@ -586,9 +535,9 @@ describe("opencode-bytheway tui plugin", () => {
       const { api, rows, views } = setup()
       await plugin.tui(api, undefined, { state: "first" } as any)
 
-      expect(cfg.command["experimental-btw"]).toEqual({
+      expect(cfg.command["btw-prompt"]).toEqual({
         description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
-        template: "/experimental-btw",
+        template: "/btw-prompt",
       })
       expect(cfg.command.aside).toBeUndefined()
       expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
@@ -845,69 +794,12 @@ describe("opencode-bytheway tui plugin", () => {
     expect(toasts.at(-1)?.message).toBe("Already inside a /btw session. Run /btw_end to return.")
   })
 
-  test("adopts an experimental temp session from session.updated without polling", async () => {
-    rmSync(handoffFile, { force: true })
-    const tempMessages = [
-      textMessage("msg_ctx", "user", "Copied plain-text context from the original session."),
-    ]
-
-    const { api, emit, kv, nav, prompted, views } = setup({
-      tempMessages,
-      promptResult: {
-        info: { id: "msg_reply", role: "assistant" },
-        parts: [{ type: "text", text: "Experimental ANZAC reply" }],
-      },
-      onPrompt(args) {
-        expect(args).toEqual({
-          sessionID: "ses_exp",
-          parts: [{ type: "text", text: "tell me about the anzacs" }],
-        })
-        tempMessages.push(
-          textMessage("msg_prompt", "user", "tell me about the anzacs"),
-          textMessage("msg_reply", "assistant", "Experimental ANZAC reply", true),
-        )
-      },
-      getSessions: {
-        ses_exp: { id: "ses_exp", title: "foo() discussion", time: { updated: 3 } },
-      },
-    })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    writeFileSync(handoffFile, `${JSON.stringify({
-      type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_main",
-      tempSessionID: "ses_exp",
-      prompt: "tell me about the anzacs",
-    })}\n`)
-
-    emit("session.updated", {
-      sessionID: "ses_exp",
-      info: { id: "ses_exp", title: undefined },
-    })
-    await tick()
-    await tick()
-
-    expect(kv.get("opencode-bytheway.active")).toEqual({
-      origin: "ses_main",
-      temp: "ses_exp",
-      baseCount: 3,
-    })
-    expect(prompted()).toEqual({
-      sessionID: "ses_exp",
-      parts: [{ type: "text", text: "tell me about the anzacs" }],
-    })
-    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_exp" } })
-    expect(views).toEqual([])
-    expect(() => readFileSync(handoffFile, "utf8")).toThrow()
-    rmSync(handoffFile, { force: true })
-  })
-
-  test("adopts an experimental temp session after a later message event when the handoff file appears later", async () => {
-    rmSync(handoffFile, { force: true })
+  test("uses the experimental handoff inside btw.open and skips the entry dialog", async () => {
+    rmSync(handoffFile("ses_exp_origin_a"), { force: true })
     const tempMessages: any[] = []
 
-    const { api, emit, kv, nav, prompted, views } = setup({
+    const { api, kv, nav, prompted, rows, views } = setup({
+      sessionID: "ses_exp_origin_a",
       tempMessages,
       promptResult: {
         info: { id: "msg_reply", role: "assistant" },
@@ -915,7 +807,7 @@ describe("opencode-bytheway tui plugin", () => {
       },
       onPrompt(args) {
         expect(args).toEqual({
-          sessionID: "ses_exp",
+          sessionID: "ses_btw",
           parts: [{ type: "text", text: "tell me about the anzacs" }],
         })
         tempMessages.push(
@@ -923,192 +815,64 @@ describe("opencode-bytheway tui plugin", () => {
           textMessage("msg_reply", "assistant", "Experimental ANZAC reply", true),
         )
       },
-      getSessions: {
-        ses_exp: { id: "ses_exp", title: "foo() discussion", time: { updated: 3 } },
-      },
     })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    emit("session.updated", {
-      sessionID: "ses_exp",
-      info: { id: "ses_exp", title: undefined },
-    })
-    await tick()
-    await tick()
-
-    expect(kv.get("opencode-bytheway.active")).toBeUndefined()
-
-    tempMessages.push(textMessage("msg_ctx", "user", "Copied plain-text context from the original session."))
-    writeFileSync(handoffFile, `${JSON.stringify({
+    writeFileSync(handoffFile("ses_exp_origin_a"), `${JSON.stringify({
       type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_main",
-      tempSessionID: "ses_exp",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_exp_origin_a",
       prompt: "tell me about the anzacs",
     })}\n`)
 
-    emit("message.updated", {
-      sessionID: "ses_exp",
-      info: { id: "msg_reply", role: "assistant" },
-    })
+    cmd(rows(), "btw.open").onSelect()
     await tick()
     await tick()
 
     expect(kv.get("opencode-bytheway.active")).toEqual({
-      origin: "ses_main",
-      temp: "ses_exp",
-      baseCount: 3,
+      origin: "ses_exp_origin_a",
+      temp: "ses_btw",
+      baseCount: 2,
     })
     expect(prompted()).toEqual({
-      sessionID: "ses_exp",
+      sessionID: "ses_btw",
       parts: [{ type: "text", text: "tell me about the anzacs" }],
     })
-    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_exp" } })
+    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
     expect(views).toEqual([])
-    expect(() => readFileSync(handoffFile, "utf8")).toThrow()
-    rmSync(handoffFile, { force: true })
+    expect(() => readFileSync(handoffFile("ses_exp_origin_a"), "utf8")).toThrow()
+    rmSync(handoffFile("ses_exp_origin_a"), { force: true })
   })
 
-  test("replaces stale active btw state when adopting an experimental session from the origin", async () => {
-    rmSync(handoffFile, { force: true })
-    const tempMessages = [textMessage("msg_ctx", "user", "Copied plain-text context from the original session.")]
-
-    const { api, emit, kv, nav, prompted } = setup({
-      tempMessages,
-      promptResult: {
-        info: { id: "msg_reply", role: "assistant" },
-        parts: [{ type: "text", text: "Experimental ANZAC reply" }],
-      },
-      onPrompt(args) {
-        expect(args).toEqual({
-          sessionID: "ses_exp",
-          parts: [{ type: "text", text: "tell me about the anzacs" }],
-        })
-        tempMessages.push(
-          textMessage("msg_prompt", "user", "tell me about the anzacs"),
-          textMessage("msg_reply", "assistant", "Experimental ANZAC reply", true),
-        )
-      },
-      getSessions: {
-        ses_exp: { id: "ses_exp", title: "foo() discussion", time: { updated: 3 } },
-      },
-    })
+  test("ignores the experimental handoff when it belongs to a different origin session", async () => {
+    rmSync(handoffFile("ses_exp_origin_b"), { force: true })
+    const { api, kv, nav, prompted, rows, views } = setup({ sessionID: "ses_exp_origin_b" })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_old", baseCount: 2 })
-    writeFileSync(handoffFile, `${JSON.stringify({
+    writeFileSync(handoffFile("ses_exp_origin_b"), `${JSON.stringify({
       type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_main",
-      tempSessionID: "ses_exp",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_other_origin",
       prompt: "tell me about the anzacs",
     })}\n`)
 
-    emit("session.updated", {
-      sessionID: "ses_exp",
-      info: { id: "ses_exp", title: undefined },
-    })
-    await tick()
+    cmd(rows(), "btw.open").onSelect()
     await tick()
 
-    expect(kv.get("opencode-bytheway.active")).toEqual({
-      origin: "ses_main",
-      temp: "ses_exp",
-      baseCount: 3,
-    })
-    expect(prompted()).toEqual({
-      sessionID: "ses_exp",
-      parts: [{ type: "text", text: "tell me about the anzacs" }],
-    })
-    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_exp" } })
-    rmSync(handoffFile, { force: true })
-  })
-
-  test("replaces stale active btw state from an unrelated old session", async () => {
-    rmSync(handoffFile, { force: true })
-    const tempMessages = [textMessage("msg_ctx", "user", "Copied plain-text context from the original session.")]
-
-    const { api, emit, kv, nav, prompted } = setup({
-      sessionID: "ses_current",
-      tempMessages,
-      promptResult: {
-        info: { id: "msg_reply", role: "assistant" },
-        parts: [{ type: "text", text: "Experimental ANZAC reply" }],
-      },
-      onPrompt(args) {
-        expect(args).toEqual({
-          sessionID: "ses_exp",
-          parts: [{ type: "text", text: "tell me about the anzacs" }],
-        })
-        tempMessages.push(
-          textMessage("msg_prompt", "user", "tell me about the anzacs"),
-          textMessage("msg_reply", "assistant", "Experimental ANZAC reply", true),
-        )
-      },
-      getSessions: {
-        ses_exp: { id: "ses_exp", title: "foo() discussion", time: { updated: 3 } },
-      },
-    })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    kv.set("opencode-bytheway.active", { origin: "ses_old_origin", temp: "ses_old_temp", baseCount: 2 })
-    writeFileSync(handoffFile, `${JSON.stringify({
-      type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_current",
-      tempSessionID: "ses_exp",
-      prompt: "tell me about the anzacs",
-    })}\n`)
-
-    emit("session.updated", {
-      sessionID: "ses_exp",
-      info: { id: "ses_exp", title: undefined },
-    })
-    await tick()
-    await tick()
-
-    expect(kv.get("opencode-bytheway.active")).toEqual({
-      origin: "ses_current",
-      temp: "ses_exp",
-      baseCount: 3,
-    })
-    expect(prompted()).toEqual({
-      sessionID: "ses_exp",
-      parts: [{ type: "text", text: "tell me about the anzacs" }],
-    })
-    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_exp" } })
-    rmSync(handoffFile, { force: true })
-  })
-
-  test("does not adopt an experimental session while already inside an active btw temp", async () => {
-    rmSync(handoffFile, { force: true })
-    const { api, emit, kv, nav, prompted } = setup({ sessionID: "ses_old" })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_old", baseCount: 2 })
-    writeFileSync(handoffFile, `${JSON.stringify({
-      type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_old",
-      tempSessionID: "ses_exp",
-      prompt: "tell me about the anzacs",
-    })}\n`)
-
-    emit("session.updated", {
-      sessionID: "ses_exp",
-      info: { id: "ses_exp", title: undefined },
-    })
-    await tick()
-    await tick()
-
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_old", baseCount: 2 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_exp_origin_b", temp: "ses_btw", baseCount: 0 })
     expect(prompted()).toBeUndefined()
-    expect(nav).toEqual([])
-    expect(JSON.parse(readFileSync(handoffFile, "utf8"))).toMatchObject({
-      tempSessionID: "ses_exp",
+    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
+    expect(views.at(-1)?.props?.title).toBe("Entered /btw Session")
+    expect(JSON.parse(readFileSync(handoffFile("ses_exp_origin_b"), "utf8"))).toMatchObject({
+      type: "experimental-btw",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_other_origin",
       prompt: "tell me about the anzacs",
     })
-    rmSync(handoffFile, { force: true })
+    rmSync(handoffFile("ses_exp_origin_b"), { force: true })
   })
 
   test("ends btw session, returns to origin, and deletes temp", async () => {

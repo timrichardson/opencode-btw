@@ -3,15 +3,20 @@ import { tool } from "@opencode-ai/plugin"
 
 const EXPERIMENTAL_BTW_HANDLED = "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__"
 const BTW_STATUS_HANDLED = "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__"
-const HANDOFF_FILE = "/tmp/opencode-bytheway-handoff.json"
 const SERVER_LOG_FILE = "/tmp/opencode-bytheway-server.log"
-const RUNTIME_MARKER = "server-file-handoff-prompt-v1"
+const RUNTIME_MARKER = "server-btw-open-handoff-v1"
 
 const slashbase = () => {
   const env = (globalThis.process?.env ?? {})
   const value = env.OPENCODE_BYTHEWAY_COMMAND?.trim().replace(/^\/+/, "").toLowerCase()
   if (!value || !/^[a-z][a-z0-9_]*$/.test(value)) return "btw"
   return value
+}
+
+const handoffnamespace = () => {
+  const value = (globalThis.process?.env ?? {}).OPENCODE_BYTHEWAY_HANDOFF_NAMESPACE?.trim()
+  if (!value) return
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_")
 }
 
 const openname = () => slashbase()
@@ -23,39 +28,10 @@ const statuscmd = {
 
 const experimentalcmd = {
   description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
-  template: "/experimental-btw",
+  template: "/btw-prompt",
 }
-
-const experimentaltitle = () => `/${openname()} experimental session`
 
 const statustext = (sessionID) => ["opencode-bytheway is loaded.", `session: ${sessionID ?? "<none>"}`].join("\n")
-
-const collecttext = (parts = []) =>
-  parts
-    .filter((part) => part.type === "text" && typeof part.text === "string" && !part.ignored)
-    .map((part) => part.text.trim())
-    .filter(Boolean)
-    .join("\n\n")
-
-const contexttext = (items = []) => {
-  const turns = items
-    .map((item) => {
-      const text = collecttext(item.parts)
-      if (!text) return
-      const role = item.info?.role === "assistant" ? "Assistant" : "User"
-      return `${role}:\n${text}`
-    })
-    .filter(Boolean)
-
-  if (!turns.length) return ""
-  return [
-    "Copied plain-text context from the original session.",
-    "Only user and assistant text is included below. Tool calls and hidden reasoning are omitted.",
-    "Use it as conversation context for the next prompt.",
-    "",
-    turns.join("\n\n"),
-  ].join("\n")
-}
 
 const logserver = (stage, data = {}) => {
   const line = JSON.stringify({
@@ -69,27 +45,55 @@ const logserver = (stage, data = {}) => {
 
 const serialize = (value) => JSON.stringify(value, null, 2)
 
-const writehandoff = async (originSessionID, tempSessionID, prompt) => {
+const handofffile = (originSessionID) => {
+  const namespace = handoffnamespace()
+  const token = (originSessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_")
+  return namespace
+    ? `/tmp/opencode-bytheway-handoff-${namespace}-${token}.json`
+    : `/tmp/opencode-bytheway-handoff-${token}.json`
+}
+
+const writehandoff = async (originSessionID, prompt) => {
   const payload = {
     type: "experimental-btw",
-    version: 2,
+    version: 3,
+    mode: "btw.open",
     originSessionID: originSessionID ?? null,
-    tempSessionID,
     prompt,
     time: new Date().toISOString(),
   }
-  await writeFile(HANDOFF_FILE, `${serialize(payload)}\n`, "utf8")
+  const file = handofffile(originSessionID)
+  await writeFile(file, `${serialize(payload)}\n`, "utf8")
   await logserver("handoff.write", {
+    file,
     originSessionID: payload.originSessionID,
-    tempSessionID,
     promptLength: prompt.length,
   })
 }
 
-const sessionmessages = async (client, sessionID) => {
-  if (!sessionID) return []
-  const list = await client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined)
-  return list?.data ?? []
+const triggerbtwopen = async (client) => {
+  await logserver("experimental.enter:trigger_btw_open:start", { mode: "publish" })
+
+  if (typeof client.tui?.publish === "function") {
+    const published = await client.tui.publish({
+      body: {
+        type: "tui.command.execute",
+        properties: { command: "btw.open" },
+      },
+    })
+    if (published?.error) throw published.error
+    await logserver("experimental.enter:trigger_btw_open:done", { mode: "publish" })
+    return
+  }
+
+  if (typeof client.tui?.executeCommand === "function") {
+    const executed = await client.tui.executeCommand({ command: "btw.open" })
+    if (executed?.error) throw executed.error
+    await logserver("experimental.enter:trigger_btw_open:done", { mode: "executeCommand" })
+    return
+  }
+
+  throw new Error("OpenCode TUI command execution is unavailable.")
 }
 
 const enter = async (client, sessionID, prompt) => {
@@ -97,40 +101,21 @@ const enter = async (client, sessionID, prompt) => {
     originSessionID: sessionID ?? null,
     promptLength: typeof prompt === "string" ? prompt.length : 0,
   })
-  const created = await client.session.create({})
-  const temp = created.data?.id
-  if (created.error || !temp) throw created.error ?? new Error("Failed to create a temporary session.")
-  await logserver("experimental.enter:created", {
-    originSessionID: sessionID ?? null,
-    tempSessionID: temp,
-  })
-
-  const copied = contexttext(await sessionmessages(client, sessionID))
-  await logserver("experimental.enter:context", {
-    tempSessionID: temp,
-    copiedLength: copied.length,
-    copiedPreview: copied.slice(0, 120),
-  })
-  if (copied) {
-    const injected = await client.session.prompt({
-      path: { id: temp },
-      body: {
-        noReply: true,
-        parts: [{ type: "text", text: copied }],
-      },
-    })
-    if (injected.error) throw injected.error
-    await logserver("experimental.enter:context_injected", { tempSessionID: temp })
-  }
-
   const text = typeof prompt === "string" ? prompt : ""
-  await writehandoff(sessionID, temp, text)
-  await client.session.update({ sessionID: temp, title: experimentaltitle() }).catch(() => undefined)
-  await logserver("experimental.enter:labeled", { tempSessionID: temp, title: experimentaltitle() })
+  await writehandoff(sessionID, text)
+  await logserver("experimental.enter:handoff_ready", {
+    originSessionID: sessionID ?? null,
+    promptLength: text.length,
+  })
+
+  await triggerbtwopen(client)
+  await logserver("experimental.enter:triggered_btw_open", {
+    originSessionID: sessionID ?? null,
+    promptLength: text.length,
+  })
 
   await logserver("experimental.enter:done", {
     originSessionID: sessionID ?? null,
-    tempSessionID: temp,
     promptLength: text.length,
   })
 
@@ -173,7 +158,7 @@ export default {
     },
     async config(cfg) {
       cfg.command = {
-        "experimental-btw": experimentalcmd,
+        "btw-prompt": experimentalcmd,
         "btw-status": statuscmd,
         ...cfg.command,
       }
@@ -190,7 +175,7 @@ export default {
         }).catch(() => undefined)
         throw new Error(BTW_STATUS_HANDLED)
       }
-      if (input.command !== "experimental-btw") return
+      if (input.command !== "btw-prompt") return
       if (!client) throw new Error("OpenCode client unavailable.")
       await logserver("command.execute.before", {
         command: input.command,

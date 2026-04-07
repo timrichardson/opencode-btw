@@ -12,7 +12,6 @@ declare namespace JSX {
 const id = "opencode-bytheway";
 const toastLogFile = "/tmp/opencode-bytheway-toast.log";
 const eventLogFile = "/tmp/opencode-bytheway-event.log";
-const handoffFile = "/tmp/opencode-bytheway-handoff.json";
 const runtimeMarker = "tui-file-handoff-prompt-v1";
 
 const slashbase = () => {
@@ -81,6 +80,23 @@ export const indicator = (sessionID: string | undefined, state?: Btw) => {
 };
 
 export const sessiontitle = () => `${slash(openname())} session`;
+
+const handoffnamespace = () => {
+  const env = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }).process?.env;
+  const value = env?.["OPENCODE_BYTHEWAY_HANDOFF_NAMESPACE"]?.trim();
+  if (!value) return;
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+};
+
+const handofffile = (originSessionID: string | undefined) => {
+  const namespace = handoffnamespace();
+  const token = (originSessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_");
+  return namespace
+    ? `/tmp/opencode-bytheway-handoff-${namespace}-${token}.json`
+    : `/tmp/opencode-bytheway-handoff-${token}.json`;
+};
 
 const msg = (err: unknown) => {
   if (err instanceof Error) return err.message;
@@ -258,21 +274,21 @@ const tui: TuiPlugin = async (api) => {
     ].join("\n");
   };
 
-  const readhandoff = async () => {
+  const readhandoff = async (originSessionID: string) => {
     try {
-      const text = await readFile(handoffFile, "utf8");
+      const text = await readFile(handofffile(originSessionID), "utf8");
       const value = JSON.parse(text);
       if (!value || typeof value !== "object") return;
       if (value.type !== "experimental-btw") return;
-      if ("version" in value && value.version !== undefined && typeof value.version !== "number") return;
-      if (typeof value.tempSessionID !== "string") return;
+      if (value.version !== 3) return;
+      if (value.mode !== "btw.open") return;
       if (value.originSessionID !== null && typeof value.originSessionID !== "string") return;
       if (typeof value.prompt !== "string") return;
       return value as {
         type: "experimental-btw";
-        version?: number;
+        version: 3;
+        mode: "btw.open";
         originSessionID: string | null;
-        tempSessionID: string;
         prompt: string;
         time?: string;
       };
@@ -281,8 +297,8 @@ const tui: TuiPlugin = async (api) => {
     }
   };
 
-  const clearhandoff = async () => {
-    await unlink(handoffFile).catch(() => undefined);
+  const clearhandoff = async (originSessionID: string) => {
+    await unlink(handofffile(originSessionID)).catch(() => undefined);
   };
 
   const fork = async (sessionID: string, cut: Spawn) => {
@@ -322,11 +338,40 @@ const tui: TuiPlugin = async (api) => {
 
     try {
       const source = await origin();
+      const handoff = await readhandoff(source);
+      const experimental = handoff && handoff.originSessionID === source ? handoff : undefined;
+      if (experimental) {
+        await clearhandoff(source);
+        logevent("experimental:claimed_handoff", {
+          originSessionID: source,
+          promptLength: experimental.prompt.length,
+        });
+      }
       const cut = await cutoff(source);
       const temp = await fork(source, cut);
       await label(temp);
       save({ origin: source, temp, baseCount: cut.count });
       api.route.navigate("session", { sessionID: temp });
+      if (experimental) {
+        if (experimental.prompt.trim()) {
+          const seeded = await api.client.session.prompt({
+            sessionID: temp,
+            parts: [{ type: "text", text: experimental.prompt }],
+          });
+          if (seeded?.error) throw seeded.error;
+
+          const after = await messages(temp);
+          const baseCount = Math.max(after.length, cut.count + 2);
+          save({ origin: source, temp, baseCount });
+          logevent("experimental:prompted", {
+            originSessionID: source,
+            tempSessionID: temp,
+            baseCount,
+            promptLength: experimental.prompt.length,
+          });
+        }
+        return;
+      }
       const DialogAlert = api.ui.DialogAlert;
       api.ui.dialog.setSize("large");
       api.ui.dialog.replace(() =>
@@ -470,140 +515,6 @@ const tui: TuiPlugin = async (api) => {
       },
     },
   });
-
-  const pendingExperimental = new Set<string>();
-  const adoptExperimental = async (sessionID: string) => {
-    logevent("adopt:start", { targetSessionID: sessionID });
-    if (pendingExperimental.has(sessionID)) {
-      logevent("adopt:skip_pending", { targetSessionID: sessionID });
-      return;
-    }
-
-    const currentSessionID = current();
-    const active = load();
-    if (active) {
-      const canReplaceActive = currentSessionID !== active.temp;
-      if (!canReplaceActive) {
-        logevent("adopt:skip_active", {
-          targetSessionID: sessionID,
-          activeOriginSessionID: active.origin,
-          activeTempSessionID: active.temp,
-        });
-        return;
-      }
-      logevent("adopt:replace_active", {
-        targetSessionID: sessionID,
-        activeOriginSessionID: active.origin,
-        activeTempSessionID: active.temp,
-      });
-    }
-
-    const originSessionID = currentSessionID;
-    if (!originSessionID || originSessionID === sessionID) {
-      logevent("adopt:skip_origin", { targetSessionID: sessionID, originSessionID: originSessionID ?? null });
-      return;
-    }
-
-    pendingExperimental.add(sessionID);
-
-    try {
-      const handoff = await readhandoff();
-      logevent("adopt:fetched_handoff", {
-        targetSessionID: sessionID,
-        handoffSessionID: handoff?.tempSessionID ?? null,
-        handoffOriginSessionID: handoff?.originSessionID ?? null,
-      });
-      if (!handoff || handoff.tempSessionID !== sessionID || handoff.originSessionID !== originSessionID) {
-        logevent("adopt:skip_marker", {
-          targetSessionID: sessionID,
-          handoffSessionID: handoff?.tempSessionID ?? null,
-          handoffOriginSessionID: handoff?.originSessionID ?? null,
-        });
-        return;
-      }
-
-      const before = await messages(sessionID);
-      const beforeCount = before.length;
-      logevent("adopt:fetched_messages", {
-        targetSessionID: sessionID,
-        count: beforeCount,
-      });
-
-      save({ origin: originSessionID, temp: sessionID, baseCount: beforeCount });
-      if (currentSessionID !== sessionID) {
-        api.route.navigate("session", { sessionID });
-        logevent("adopt:navigated", { targetSessionID: sessionID });
-      }
-
-      if (handoff.prompt.trim()) {
-        const seeded = await api.client.session.prompt({
-          sessionID,
-          parts: [{ type: "text", text: handoff.prompt }],
-        });
-        if (seeded?.error) throw seeded.error;
-
-        const after = await messages(sessionID);
-        const baseCount = Math.max(after.length, beforeCount + 2);
-        save({ origin: originSessionID, temp: sessionID, baseCount });
-        logevent("adopt:fetched_messages_after_prompt", {
-          targetSessionID: sessionID,
-          count: after.length,
-          baseCount,
-        });
-      }
-
-      await clearhandoff();
-
-      logevent("adopt:completed", {
-        targetSessionID: sessionID,
-        originSessionID,
-        promptLength: handoff.prompt.length,
-      });
-    } catch (err) {
-      logevent("adopt:error", { targetSessionID: sessionID, error: msg(err) });
-      toast({
-        variant: "error",
-        message: msg(err),
-      });
-    } finally {
-      pendingExperimental.delete(sessionID);
-    }
-  };
-
-  const offCreated = api.event.on("session.created", (event) => {
-    logevent("event:session.created", {
-      targetSessionID: event.properties.sessionID,
-      title: event.properties.info.title ?? null,
-    });
-    void adoptExperimental(event.properties.sessionID);
-  });
-  const offUpdated = api.event.on("session.updated", (event) => {
-    logevent("event:session.updated", {
-      targetSessionID: event.properties.sessionID,
-      title: event.properties.info.title ?? null,
-    });
-    void adoptExperimental(event.properties.sessionID);
-  });
-  const offMessageUpdated = api.event.on("message.updated", (event) => {
-    logevent("event:message.updated", {
-      targetSessionID: event.properties.sessionID,
-      messageID: event.properties.info.id,
-      role: event.properties.info.role,
-    });
-    void adoptExperimental(event.properties.sessionID);
-  });
-  const offPartUpdated = api.event.on("message.part.updated", (event) => {
-    logevent("event:message.part.updated", {
-      targetSessionID: event.properties.sessionID,
-      partType: event.properties.part.type,
-      messageID: event.properties.part.messageID,
-    });
-    void adoptExperimental(event.properties.sessionID);
-  });
-  api.lifecycle.onDispose(offCreated);
-  api.lifecycle.onDispose(offUpdated);
-  api.lifecycle.onDispose(offMessageUpdated);
-  api.lifecycle.onDispose(offPartUpdated);
 
   api.command.register(() => {
     const sessionID = current();
