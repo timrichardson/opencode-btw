@@ -3,8 +3,10 @@
 OpenCode TUI plugin that adds temporary "by the way" side-session workflows.
 
 A proof-of-concept plugin to implement something like Claude Code's "btw" feature, where you can branch into a temporary side session, then discard it or merge text back into the parent session when you are done.
+`/btw` does not expect a prompt, and opens a session that you can exit with `/btw-end`.
+`/btw-prompt` can be used as `/btw-prompt tell me more about foo()`; it is experimental.
+These commands are queued like any other OpenCode command when the current session is busy.
 
-`/btw` is queued like any other OpenCode command when the current session is busy.
 
 Normal usage:
 - run `/btw` and then type in the temp session
