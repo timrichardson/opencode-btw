@@ -551,6 +551,7 @@ describe("opencode-bytheway tui plugin", () => {
 
       cmd(rows(), "btw.open").onSelect()
       await tick()
+      await tick()
 
       expect(views.at(-1)?.props?.title).toBe("Entered /aside Session")
       expect(views.at(-1)?.props?.message).toContain("Run /aside_end to return")
@@ -586,6 +587,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     cmd(rows(), "btw.open").onSelect()
     await tick()
+    await tick()
 
     expect(created()).toEqual({})
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
@@ -599,6 +601,7 @@ describe("opencode-bytheway tui plugin", () => {
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     cmd(rows(), "btw.open").onSelect()
+    await tick()
     await tick()
 
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
@@ -670,6 +673,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     cmd(rows(), "btw.open").onSelect()
     await tick()
+    await tick()
 
     expect(views.at(-1)?.type).toBe("alert")
     expect(views.at(-1)?.props?.title).toBe("Entered /btw Session")
@@ -681,6 +685,7 @@ describe("opencode-bytheway tui plugin", () => {
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     cmd(rows(), "btw.open").onSelect()
+    await tick()
     await tick()
 
     expect(cmd(rows(), "btw.open")?.hidden).toBe(true)
@@ -704,6 +709,7 @@ describe("opencode-bytheway tui plugin", () => {
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     cmd(rows(), "btw.open").onSelect()
+    await tick()
     await tick()
 
     cmd(rows(), "btw.merge").onSelect()
@@ -787,6 +793,7 @@ describe("opencode-bytheway tui plugin", () => {
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     cmd(rows(), "btw.open").onSelect()
+    await tick()
     await tick()
 
     cmd(rows(), "btw.open").onSelect()
@@ -881,6 +888,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     cmd(rows(), "btw.open").onSelect()
     await tick()
+    await tick()
 
     cmd(rows(), "btw.end").onSelect()
     await tick()
@@ -910,6 +918,7 @@ describe("opencode-bytheway tui plugin", () => {
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     cmd(rows(), "btw.open").onSelect()
+    await tick()
     await tick()
 
     cmd(rows(), "btw.end").onSelect()
