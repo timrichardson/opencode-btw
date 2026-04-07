@@ -52,7 +52,7 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.2.2"]
+  "plugin": ["opencode-bytheway@0.2.3"]
 }
 ```
 
@@ -162,6 +162,6 @@ Suggested WebStorm workflow:
 Example:
 
 ```bash
-git tag v0.2.2
-git push origin v0.2.2
+git tag v0.2.3
+git push origin v0.2.3
 ```
