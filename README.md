@@ -27,7 +27,7 @@ A plugin package opencode-btw already exists. It is not an attempt to emulate Cl
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-For `/btw`, `/btw_merge`, and `/btw_end`, list this package in `tui.json[c]`.
+For `/btw`, `/btw-merge`, and `/btw-end`, list this package in `tui.json[c]`.
 List it in `opencode.json[c]` too if you want:
 - `/btw-prompt some prompt` to hand that prompt to the TUI-managed temp session
 - the `btw-status` diagnostic command
@@ -54,7 +54,7 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.2"]
+  "plugin": ["opencode-bytheway@0.3.3"]
 }
 ```
 
@@ -71,21 +71,21 @@ Optional command-family override:
 OPENCODE_BYTHEWAY_COMMAND=aside
 ```
 
-With that env var set, the TUI plugin exposes `/aside`, `/aside_merge`, and `/aside_end` instead of the default `/btw` family.
+With that env var set, the TUI plugin exposes `/aside`, `/aside-merge`, and `/aside-end` instead of the default `/btw` family.
 The server-side `/btw-prompt` command stays fixed.
 
 ## Commands
 
 - `/btw`: open a temporary btw side session in the same terminal, preserving context from the current session
-- `/btw_merge`: append plain user/assistant text from the temporary session back into the original session, then close the temporary session
-- `/btw_end`: return to the original session and remove the temporary btw session without carrying text back
+- `/btw-merge`: append plain user/assistant text from the temporary session back into the original session, then close the temporary session
+- `/btw-end`: return to the original session and remove the temporary btw session without carrying text back
 - `/btw-prompt your prompt here`: experimental server-side entrypoint that is dispatched directly by the server hook, writes a prompt handoff, and triggers the existing TUI-owned `/btw` open flow so the initial prompt runs inside the forked temp session
 
 ## User experience
 
 - `/btw` is for branching off in the same terminal while keeping your main session intact
-- `/btw_merge` carries back only plain user/assistant text from the temporary session; tool calls and subagent details are omitted
-- `/btw_end` is the clear way back when you want to discard the temporary session without merging text back
+- `/btw-merge` carries back only plain user/assistant text from the temporary session; tool calls and subagent details are omitted
+- `/btw-end` is the clear way back when you want to discard the temporary session without merging text back
 - nested btw sessions are blocked to avoid stacked temporary contexts
 
 ## Local development
@@ -105,7 +105,7 @@ After changing `tui.tsx`, run `bun run build` again before reopening or reloadin
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-When testing locally, put the package root in `tui.json[c]` for `/btw`, `/btw_merge`, and `/btw_end`.
+When testing locally, put the package root in `tui.json[c]` for `/btw`, `/btw-merge`, and `/btw-end`.
 Add the same package root to `opencode.json[c]` if you also want `/btw-prompt` support or the `btw-status` diagnostic command.
 
 Example `opencode.json` entry when the repository lives at `~/projects/opencode-btw-plugin`:
@@ -156,12 +156,12 @@ Suggested WebStorm workflow:
 - tag format is `v*`
 - verify both plugin halves load after install:
   - server: `btw-status`
-  - TUI: `/btw`, `/btw_merge`, `/btw_end`
+  - TUI: `/btw`, `/btw-merge`, `/btw-end`
   - optional experimental server command: `/btw-prompt`
 
 Example:
 
 ```bash
-git tag v0.3.2
-git push origin v0.3.2
+git tag v0.3.3
+git push origin v0.3.3
 ```

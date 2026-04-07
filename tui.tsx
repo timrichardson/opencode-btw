@@ -28,8 +28,8 @@ const slashbase = () => {
 
 const slash = (name: string) => `/${name}`;
 const openname = () => slashbase();
-const endname = () => `${slashbase()}_end`;
-const mergename = () => `${slashbase()}_merge`;
+const endname = () => `${slashbase()}-end`;
+const mergename = () => `${slashbase()}-merge`;
 const experimentaltitle = () => `${slash(openname())} experimental session`;
 
 type Spawn =

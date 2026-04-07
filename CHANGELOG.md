@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.3
+
+- rename the remaining `/btw` slash-command family members to hyphenated forms: `/btw-merge` and `/btw-end`
+- keep command-family overrides consistent with the same hyphenated naming, such as `/aside-merge` and `/aside-end`
+
 ## 0.3.2
 
 - rename the experimental server-side prompt command to `/btw-prompt`
@@ -8,7 +13,7 @@
 
 ## 0.3.1
 
-- scope `/btw` command visibility to the current session so unrelated sessions do not incorrectly show `/btw_end`
+- scope `/btw` command visibility to the current session so unrelated sessions do not incorrectly show `/btw-end`
 - handle `/btw-status` directly in the TUI with a toast instead of sending it through the agent loop
 
 ## 0.3.0
@@ -39,7 +44,7 @@
 ## 0.1.5
 
 - align the runtime plugin id with the published package name and add direct server-entry coverage
-- harden popup and temp-session cleanup for canceled runs and failed `/btw_end` deletes
+- harden popup and temp-session cleanup for canceled runs and failed `/btw-end` deletes
 - add an optional `OPENCODE_BYTHEWAY_COMMAND` env var to rename the `/btw` slash-command family
 - pin Bun in CI and release workflows and document local `file://` plugin development setup
 
@@ -58,7 +63,7 @@
 ## 0.1.0
 
 - add `/btw` for same-terminal temporary side sessions
-- add `/btw_end` to return to the original session and close the temp session
+- add `/btw-end` to return to the original session and close the temp session
 - add `/btw_popup` for one-off popup questions that preserve the current screen
 - improve popup rendering, copy feedback, and streaming stability
 - publish from the standalone `opencode-btw` repository using a root package and root release workflow
