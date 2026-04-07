@@ -6,7 +6,6 @@ const handoffFile = "/tmp/opencode-bytheway-handoff.json"
 
 function createClient(promptData: unknown) {
   const calls: string[] = []
-  let promptCount = 0
 
   return {
     calls,
@@ -32,27 +31,17 @@ function createClient(promptData: unknown) {
         },
         async prompt(args: Record<string, unknown>) {
           calls.push("prompt")
-          promptCount += 1
-          if (promptCount === 1) {
-            expect(args).toEqual({
-              path: { id: "ses_btw" },
-              body: {
-                noReply: true,
-                parts: [{ type: "text", text: [
-                  "Copied plain-text context from the original session.",
-                  "Only user and assistant text is included below. Tool calls and hidden reasoning are omitted.",
-                  "Use it as conversation context for the next prompt.",
-                  "",
-                  "User:\nContext question\n\nAssistant:\nContext answer",
-                ].join("\n") }],
-              },
-            })
-            return { data: { info: { id: "msg_ctx", role: "user" }, parts: [] } }
-          }
           expect(args).toEqual({
             path: { id: "ses_btw" },
             body: {
-              parts: [{ type: "text", text: "investigate this" }],
+              noReply: true,
+              parts: [{ type: "text", text: [
+                "Copied plain-text context from the original session.",
+                "Only user and assistant text is included below. Tool calls and hidden reasoning are omitted.",
+                "Use it as conversation context for the next prompt.",
+                "",
+                "User:\nContext question\n\nAssistant:\nContext answer",
+              ].join("\n") }],
             },
           })
           return { data: promptData }
@@ -63,14 +52,11 @@ function createClient(promptData: unknown) {
 }
 
 describe("experimental-btw server debug harness", () => {
-  test("steps through opencode_bytheway_plugin_open and returns no origin-session text", async () => {
+  test("steps through opencode_bytheway_plugin_open and writes a prompt-based handoff", async () => {
     rmSync(handoffFile, { force: true })
     const { client, calls } = createClient({
-      info: { id: "msg_reply", role: "assistant" },
-      parts: [
-        { type: "reasoning", text: "hidden" },
-        { type: "text", text: "  ANZAC stands for Australian and New Zealand Army Corps.  " },
-      ],
+      info: { id: "msg_ctx", role: "user" },
+      parts: [],
     })
 
     const server = await serverPlugin.server({ client } as any)
@@ -80,12 +66,13 @@ describe("experimental-btw server debug harness", () => {
     )
 
     expect(result).toBe("")
-    expect(calls).toEqual(["create", "messages", "prompt", "prompt", "update"])
+    expect(calls).toEqual(["create", "messages", "prompt", "update"])
     expect(JSON.parse(readFileSync(handoffFile, "utf8"))).toMatchObject({
       type: "experimental-btw",
+      version: 2,
       originSessionID: "ses_main",
       tempSessionID: "ses_btw",
-      reply: "ANZAC stands for Australian and New Zealand Army Corps.",
+      prompt: "investigate this",
     })
     rmSync(handoffFile, { force: true })
   })
