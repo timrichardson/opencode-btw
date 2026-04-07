@@ -4,12 +4,12 @@
 
 This repository contains the standalone `opencode-bytheway` OpenCode plugin.
 
-It provides the `/btw`, `/btw_merge`, and `/btw_end` workflows for temporary side sessions, plus an experimental server-side `/experimental-btw` entrypoint that is dispatched directly in a command hook, copies plain-text context into a fresh session, and hands the initial prompt to the TUI.
+It provides the `/btw`, `/btw_merge`, and `/btw_end` workflows for temporary side sessions, plus an experimental server-side `/experimental-btw` entrypoint that is dispatched directly in a command hook, creates a temp session, writes a prompt handoff, and relies on the TUI to submit the initial prompt.
 
 ## Important Files
 
 - `index.js`: server-side plugin entry. Defines the plugin `id`, the local `btw_status` development tool, the experimental `/experimental-btw` command, and its direct `command.execute.before` dispatch.
-- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw_merge`, and `/btw_end` slash commands, session state, navigation, and event-driven experimental handoff live.
+- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw_merge`, and `/btw_end` slash commands, session state, navigation, and experimental handoff adoption live.
 - `tui.test.tsx`: Bun test coverage for the TUI behavior.
 - `server.debug.test.ts`: focused Bun harness for debugging the experimental server-side open tool in-process.
 - `scripts/build.ts`: builds `tui.tsx` into `dist/tui.js`.

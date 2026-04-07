@@ -12,8 +12,8 @@ Normal usage:
 Experimental server-side entrypoint:
 - run `/experimental-btw your prompt here` to open the temp session and hand that prompt to the TUI plugin
 - the server command is handled directly in a server hook without an LLM hop
-- it copies plain user/assistant text context from the current session into a fresh temporary session
-- the TUI plugin listens for the marked experimental session update, switches you into that temp session in the same terminal, and sends the initial prompt there without adding it to the parent transcript
+- it creates a fresh temp session, copies plain user/assistant text context into it, and writes a prompt handoff for the TUI plugin
+- the TUI plugin listens for the marked temp session update, switches you into that temp session in the same terminal, and sends the initial prompt there without adding it to the parent transcript
 
 No nesting.
 
@@ -145,7 +145,7 @@ This harness uses a mocked prompt result so you can step through the extraction 
 
 Suggested WebStorm workflow:
 1. Open `server.debug.test.ts`.
-2. Set breakpoints in `index.js` inside `opencode_bytheway_plugin_open.execute`, `enter`, `promptwithdebug`, or `promptresult`.
+2. Set breakpoints in `index.js` inside `opencode_bytheway_plugin_open.execute` or `enter`.
 3. In WebStorm, run `server.debug.test.ts` in Debug mode, or create a Bun run/debug configuration for `bun test ./server.debug.test.ts`.
 4. If you want to debug the broader existing suite instead, use `tui.test.tsx` and target the `opencode_bytheway_plugin_open` tests.
 

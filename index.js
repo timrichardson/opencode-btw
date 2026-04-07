@@ -1,8 +1,10 @@
-import { writeFile } from "node:fs/promises"
+import { appendFile, writeFile } from "node:fs/promises"
 import { tool } from "@opencode-ai/plugin"
 
-const HANDOFF_FILE = "/tmp/opencode-bytheway-handoff.json"
 const EXPERIMENTAL_BTW_HANDLED = "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__"
+const HANDOFF_FILE = "/tmp/opencode-bytheway-handoff.json"
+const SERVER_LOG_FILE = "/tmp/opencode-bytheway-server.log"
+const RUNTIME_MARKER = "server-file-handoff-prompt-v1"
 
 const slashbase = () => {
   const env = (globalThis.process?.env ?? {})
@@ -53,21 +55,33 @@ const contexttext = (items = []) => {
   ].join("\n")
 }
 
+const logserver = (stage, data = {}) => {
+  const line = JSON.stringify({
+    time: new Date().toISOString(),
+    runtimeMarker: RUNTIME_MARKER,
+    stage,
+    ...data,
+  })
+  return appendFile(SERVER_LOG_FILE, `${line}\n`, "utf8").catch(() => undefined)
+}
+
 const serialize = (value) => JSON.stringify(value, null, 2)
 
 const writehandoff = async (originSessionID, tempSessionID, prompt) => {
-  await writeFile(
-    HANDOFF_FILE,
-    `${serialize({
-      type: "experimental-btw",
-      version: 2,
-      originSessionID: originSessionID ?? null,
-      tempSessionID,
-      prompt,
-      time: new Date().toISOString(),
-    })}\n`,
-    "utf8",
-  )
+  const payload = {
+    type: "experimental-btw",
+    version: 2,
+    originSessionID: originSessionID ?? null,
+    tempSessionID,
+    prompt,
+    time: new Date().toISOString(),
+  }
+  await writeFile(HANDOFF_FILE, `${serialize(payload)}\n`, "utf8")
+  await logserver("handoff.write", {
+    originSessionID: payload.originSessionID,
+    tempSessionID,
+    promptLength: prompt.length,
+  })
 }
 
 const sessionmessages = async (client, sessionID) => {
@@ -77,10 +91,24 @@ const sessionmessages = async (client, sessionID) => {
 }
 
 const enter = async (client, sessionID, prompt) => {
-  const temp = (await client.session.create({})).data?.id
-  if (!temp) throw new Error("Failed to create a temporary session.")
+  await logserver("experimental.enter:start", {
+    originSessionID: sessionID ?? null,
+    promptLength: typeof prompt === "string" ? prompt.length : 0,
+  })
+  const created = await client.session.create({})
+  const temp = created.data?.id
+  if (created.error || !temp) throw created.error ?? new Error("Failed to create a temporary session.")
+  await logserver("experimental.enter:created", {
+    originSessionID: sessionID ?? null,
+    tempSessionID: temp,
+  })
 
   const copied = contexttext(await sessionmessages(client, sessionID))
+  await logserver("experimental.enter:context", {
+    tempSessionID: temp,
+    copiedLength: copied.length,
+    copiedPreview: copied.slice(0, 120),
+  })
   if (copied) {
     const injected = await client.session.prompt({
       path: { id: temp },
@@ -90,10 +118,19 @@ const enter = async (client, sessionID, prompt) => {
       },
     })
     if (injected.error) throw injected.error
+    await logserver("experimental.enter:context_injected", { tempSessionID: temp })
   }
 
-  await writehandoff(sessionID, temp, typeof prompt === "string" ? prompt : "")
+  const text = typeof prompt === "string" ? prompt : ""
+  await writehandoff(sessionID, temp, text)
   await client.session.update({ sessionID: temp, title: experimentaltitle() }).catch(() => undefined)
+  await logserver("experimental.enter:labeled", { tempSessionID: temp, title: experimentaltitle() })
+
+  await logserver("experimental.enter:done", {
+    originSessionID: sessionID ?? null,
+    tempSessionID: temp,
+    promptLength: text.length,
+  })
 
   return ""
 }
@@ -142,6 +179,11 @@ export default {
     "command.execute.before": async (input) => {
       if (input.command !== "experimental-btw") return
       if (!client) throw new Error("OpenCode client unavailable.")
+      await logserver("command.execute.before", {
+        command: input.command,
+        originSessionID: input.sessionID ?? null,
+        promptLength: typeof input.arguments === "string" ? input.arguments.length : 0,
+      })
       await enter(client, input.sessionID, input.arguments)
       throw new Error(EXPERIMENTAL_BTW_HANDLED)
     },

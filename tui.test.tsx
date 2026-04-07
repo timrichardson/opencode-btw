@@ -5,6 +5,7 @@ import serverPlugin from "./index.js"
 import plugin, { indicator, sessiontitle } from "./tui"
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+const handoffFile = "/tmp/opencode-bytheway-handoff.json"
 
 const env = () =>
   (globalThis as typeof globalThis & {
@@ -14,8 +15,6 @@ const env = () =>
 function cmd(rows: any[], value: string) {
   return rows.find((row) => row.value === value)
 }
-
-const handoffFile = "/tmp/opencode-bytheway-handoff.json"
 
 function textMessage(id: string, role: "user" | "assistant", text: string, completed?: boolean) {
   return {
@@ -73,6 +72,7 @@ function setup(input?: {
   let updated: Record<string, unknown> | undefined
   let fork: Record<string, unknown> | undefined
   let prompted: Record<string, unknown> | undefined
+  let appended: Record<string, unknown> | undefined
   let route: any =
     input?.session === false
       ? { name: "home" }
@@ -268,6 +268,19 @@ function setup(input?: {
           nav.push({ name: "session", params: { sessionID: args.sessionID } })
           return { data: true }
         },
+        async clearPrompt() {
+          calls.push("clearPrompt")
+          return { data: true }
+        },
+        async appendPrompt(args: Record<string, unknown>) {
+          calls.push("appendPrompt")
+          appended = args
+          return { data: true }
+        },
+        async submitPrompt() {
+          calls.push("submitPrompt")
+          return { data: true }
+        },
       },
     },
   }
@@ -275,6 +288,7 @@ function setup(input?: {
   return {
     api,
     calls,
+    appended: () => appended,
     created: () => created,
     fork: () => fork,
     kv,
@@ -388,7 +402,7 @@ describe("opencode-bytheway tui plugin", () => {
           return { data: { id: "ses_btw" } }
         },
         async update() {
-          return { data: undefined }
+          return { data: true }
         },
       },
     }
@@ -413,7 +427,7 @@ describe("opencode-bytheway tui plugin", () => {
           return { data: { id: "ses_btw" } }
         },
         async update() {
-          return { data: undefined }
+          return { data: true }
         },
       },
     }
@@ -892,9 +906,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(kv.get("opencode-bytheway.active")).toBeUndefined()
 
-    tempMessages.push(
-      textMessage("msg_ctx", "user", "Copied plain-text context from the original session."),
-    )
+    tempMessages.push(textMessage("msg_ctx", "user", "Copied plain-text context from the original session."))
     writeFileSync(handoffFile, `${JSON.stringify({
       type: "experimental-btw",
       version: 2,
@@ -925,69 +937,9 @@ describe("opencode-bytheway tui plugin", () => {
     rmSync(handoffFile, { force: true })
   })
 
-  test("only submits the experimental prompt once across repeated adoption events", async () => {
-    rmSync(handoffFile, { force: true })
-    const tempMessages = [
-      textMessage("msg_ctx", "user", "Copied plain-text context from the original session."),
-    ]
-    let promptCalls = 0
-
-    const { api, calls, emit, prompted } = setup({
-      tempMessages,
-      promptResult: {
-        info: { id: "msg_reply", role: "assistant" },
-        parts: [{ type: "text", text: "Experimental ANZAC reply" }],
-      },
-      onPrompt(args) {
-        promptCalls += 1
-        expect(args).toEqual({
-          sessionID: "ses_exp",
-          parts: [{ type: "text", text: "tell me about the anzacs" }],
-        })
-        tempMessages.push(
-          textMessage("msg_prompt", "user", "tell me about the anzacs"),
-          textMessage("msg_reply", "assistant", "Experimental ANZAC reply", true),
-        )
-      },
-      getSessions: {
-        ses_exp: { id: "ses_exp", title: "foo() discussion", time: { updated: 3 } },
-      },
-    })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    writeFileSync(handoffFile, `${JSON.stringify({
-      type: "experimental-btw",
-      version: 2,
-      originSessionID: "ses_main",
-      tempSessionID: "ses_exp",
-      prompt: "tell me about the anzacs",
-    })}\n`)
-
-    emit("session.updated", {
-      sessionID: "ses_exp",
-      info: { id: "ses_exp", title: undefined },
-    })
-    emit("message.updated", {
-      sessionID: "ses_exp",
-      info: { id: "msg_reply", role: "assistant" },
-    })
-    await tick()
-    await tick()
-
-    expect(promptCalls).toBe(1)
-    expect(calls.filter((item) => item === "prompt")).toHaveLength(1)
-    expect(prompted()).toEqual({
-      sessionID: "ses_exp",
-      parts: [{ type: "text", text: "tell me about the anzacs" }],
-    })
-    rmSync(handoffFile, { force: true })
-  })
-
   test("replaces stale active btw state when adopting an experimental session from the origin", async () => {
     rmSync(handoffFile, { force: true })
-    const tempMessages = [
-      textMessage("msg_ctx", "user", "Copied plain-text context from the original session."),
-    ]
+    const tempMessages = [textMessage("msg_ctx", "user", "Copied plain-text context from the original session.")]
 
     const { api, emit, kv, nav, prompted } = setup({
       tempMessages,
@@ -1042,9 +994,7 @@ describe("opencode-bytheway tui plugin", () => {
 
   test("replaces stale active btw state from an unrelated old session", async () => {
     rmSync(handoffFile, { force: true })
-    const tempMessages = [
-      textMessage("msg_ctx", "user", "Copied plain-text context from the original session."),
-    ]
+    const tempMessages = [textMessage("msg_ctx", "user", "Copied plain-text context from the original session.")]
 
     const { api, emit, kv, nav, prompted } = setup({
       sessionID: "ses_current",

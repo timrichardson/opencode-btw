@@ -13,6 +13,7 @@ const id = "opencode-bytheway";
 const toastLogFile = "/tmp/opencode-bytheway-toast.log";
 const eventLogFile = "/tmp/opencode-bytheway-event.log";
 const handoffFile = "/tmp/opencode-bytheway-handoff.json";
+const runtimeMarker = "tui-file-handoff-prompt-v1";
 
 const slashbase = () => {
   const env = (globalThis as typeof globalThis & {
@@ -120,6 +121,7 @@ const tui: TuiPlugin = async (api) => {
       : undefined;
     const line = JSON.stringify({
       time: new Date().toISOString(),
+      runtimeMarker,
       stage,
       route: route.name,
       sessionID: currentSessionID ?? null,
@@ -127,6 +129,8 @@ const tui: TuiPlugin = async (api) => {
     });
     void appendFile(eventLogFile, `${line}\n`, "utf8").catch(() => undefined);
   };
+
+  logevent("tui:init", { pluginID: id });
 
   const load = () => {
     if (btw) return btw;
@@ -150,6 +154,19 @@ const tui: TuiPlugin = async (api) => {
     if (typeof sessionID !== "string") return;
     return sessionID;
   };
+
+  const messages = async (sessionID: string): Promise<SessionMessage[]> => {
+    const list = await api.client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined);
+    if (!list?.data?.length) return [];
+    return list.data as SessionMessage[];
+  };
+
+  const collecttext = (parts: SessionMessage["parts"]) =>
+    parts
+      .filter((part) => part.type === "text" && typeof part.text === "string" && !part.ignored)
+      .map((part) => part.text!.trim())
+      .filter(Boolean)
+      .join("\n\n");
 
   const rehydrate = async () => {
     if (btw) return btw;
@@ -217,19 +234,6 @@ const tui: TuiPlugin = async (api) => {
     return { mode: "cut", count: list.data.length, boundary, messageID: next };
   };
 
-  const messages = async (sessionID: string): Promise<SessionMessage[]> => {
-    const list = await api.client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined);
-    if (!list?.data?.length) return [];
-    return list.data as SessionMessage[];
-  };
-
-  const collecttext = (parts: SessionMessage["parts"]) =>
-    parts
-      .filter((part) => part.type === "text" && typeof part.text === "string" && !part.ignored)
-      .map((part) => part.text!.trim())
-      .filter(Boolean)
-      .join("\n\n");
-
   const mergetext = (items: SessionMessage[], start: number) => {
     const turns = items
       .slice(start)
@@ -249,65 +253,13 @@ const tui: TuiPlugin = async (api) => {
     ].join("\n");
   };
 
-const latestreply = (items: SessionMessage[]) => {
-  for (let i = items.length - 1; i >= 0; i--) {
-    const item = items[i];
-    if (item.info.role !== "assistant") continue;
-    const text = collecttext(item.parts);
-    if (text) return text;
-  }
-};
-
-const stringify = (value: unknown) => {
-  const seen = new WeakSet();
-  return JSON.stringify(value, (_, item) => {
-    if (!item || typeof item !== "object") return item;
-    if (seen.has(item)) return "[Circular]";
-    seen.add(item);
-    return item;
-  });
-};
-
-const fallbacktext = (value: unknown) => {
-  if (typeof value === "string") return value.trim();
-  if (value == null) return "";
-  if (typeof value !== "object") return String(value);
-  try {
-    return stringify(value);
-  } catch {
-    return String(value);
-  }
-};
-
-const promptmessage = (seeded: any) => {
-  const data = seeded?.data;
-  if (!data || typeof data !== "object") return;
-  if (!data.info || typeof data.info !== "object") return;
-  if (!Array.isArray(data.parts)) return;
-  return data;
-};
-
-const promptresult = (seeded: any) => {
-  const message = promptmessage(seeded);
-  if (!message) return fallbacktext(seeded?.data);
-
-  const text = collecttext(message.parts);
-  if (text) return text;
-
-  const structured = message.info?.structured_output;
-  if (structured !== undefined) return fallbacktext(structured);
-
-  return fallbacktext(message);
-};
-
   const readhandoff = async () => {
     try {
       const text = await readFile(handoffFile, "utf8");
       const value = JSON.parse(text);
       if (!value || typeof value !== "object") return;
       if (value.type !== "experimental-btw") return;
-      if ("version" in value && value.version !== undefined && typeof value.version !== "number")
-        return;
+      if ("version" in value && value.version !== undefined && typeof value.version !== "number") return;
       if (typeof value.tempSessionID !== "string") return;
       if (value.originSessionID !== null && typeof value.originSessionID !== "string") return;
       if (typeof value.prompt !== "string") return;
@@ -514,14 +466,9 @@ const promptresult = (seeded: any) => {
     },
   });
 
-  const seenExperimental = new Set<string>();
   const pendingExperimental = new Set<string>();
   const adoptExperimental = async (sessionID: string) => {
     logevent("adopt:start", { targetSessionID: sessionID });
-    if (seenExperimental.has(sessionID)) {
-      logevent("adopt:skip_seen", { targetSessionID: sessionID });
-      return;
-    }
     if (pendingExperimental.has(sessionID)) {
       logevent("adopt:skip_pending", { targetSessionID: sessionID });
       return;
@@ -562,7 +509,7 @@ const promptresult = (seeded: any) => {
         handoffOriginSessionID: handoff?.originSessionID ?? null,
       });
       if (!handoff || handoff.tempSessionID !== sessionID || handoff.originSessionID !== originSessionID) {
-        logevent("adopt:skip_handoff", {
+        logevent("adopt:skip_marker", {
           targetSessionID: sessionID,
           handoffSessionID: handoff?.tempSessionID ?? null,
           handoffOriginSessionID: handoff?.originSessionID ?? null,
@@ -570,23 +517,18 @@ const promptresult = (seeded: any) => {
         return;
       }
 
-      seenExperimental.add(sessionID);
-      logevent("adopt:accepted", { targetSessionID: sessionID, originSessionID, marker: "handoff" });
-
-      const currentSession = await api.client.session.get({ sessionID }).catch(() => undefined);
-      const title = currentSession?.data?.title;
-      logevent("adopt:fetched_session", { targetSessionID: sessionID, title: title ?? null });
-
       const before = await messages(sessionID);
       const beforeCount = before.length;
-      logevent("adopt:fetched_messages_before_prompt", { targetSessionID: sessionID, count: beforeCount });
+      logevent("adopt:fetched_messages", {
+        targetSessionID: sessionID,
+        count: beforeCount,
+      });
 
-      let temp = before;
-      let reply = latestreply(before);
-      let baseCount = beforeCount;
-      save({ origin: originSessionID, temp: sessionID, baseCount });
-      api.route.navigate("session", { sessionID });
-      logevent("adopt:navigated", { targetSessionID: sessionID });
+      save({ origin: originSessionID, temp: sessionID, baseCount: beforeCount });
+      if (currentSessionID !== sessionID) {
+        api.route.navigate("session", { sessionID });
+        logevent("adopt:navigated", { targetSessionID: sessionID });
+      }
 
       if (handoff.prompt.trim()) {
         const seeded = await api.client.session.prompt({
@@ -595,17 +537,24 @@ const promptresult = (seeded: any) => {
         });
         if (seeded?.error) throw seeded.error;
 
-        temp = await messages(sessionID);
-        logevent("adopt:fetched_messages_after_prompt", { targetSessionID: sessionID, count: temp.length });
-        reply = promptresult(seeded) || latestreply(temp);
-        baseCount = Math.max(temp.length, beforeCount + 2);
+        const after = await messages(sessionID);
+        const baseCount = Math.max(after.length, beforeCount + 2);
         save({ origin: originSessionID, temp: sessionID, baseCount });
+        logevent("adopt:fetched_messages_after_prompt", {
+          targetSessionID: sessionID,
+          count: after.length,
+          baseCount,
+        });
       }
 
       await clearhandoff();
-      logevent("adopt:completed", { targetSessionID: sessionID, reply: reply ?? null });
+
+      logevent("adopt:completed", {
+        targetSessionID: sessionID,
+        originSessionID,
+        promptLength: handoff.prompt.length,
+      });
     } catch (err) {
-      seenExperimental.delete(sessionID);
       logevent("adopt:error", { targetSessionID: sessionID, error: msg(err) });
       toast({
         variant: "error",
