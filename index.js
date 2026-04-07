@@ -24,7 +24,6 @@ const experimentalcmd = {
   template: "/experimental-btw",
 }
 
-const sessiontitle = () => `/${openname()} session`
 const experimentaltitle = () => `/${openname()} experimental session`
 
 const collecttext = (parts = []) =>
@@ -57,72 +56,24 @@ const contexttext = (items = []) => {
 const serialize = (value) => JSON.stringify(value, null, 2)
 
 const writehandoff = async (originSessionID, tempSessionID, prompt) => {
-  const payload = {
-    type: "experimental-btw",
-    version: 2,
-    originSessionID: originSessionID ?? null,
-    tempSessionID,
-    prompt,
-    time: new Date().toISOString(),
-  }
-  await writeFile(HANDOFF_FILE, `${serialize(payload)}\n`, "utf8")
-  return payload
-}
-
-const cutoff = async (client, sessionID) => {
-  const list = await client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined)
-  if (!list?.data?.length) return { mode: "all", count: 0 }
-
-  let last = -1
-  for (let i = list.data.length - 1; i >= 0; i--) {
-    const item = list.data[i].info
-    if (item.role !== "assistant") continue
-    if (!item.time.completed) continue
-    if (!item.finish || ["tool-calls", "unknown"].includes(item.finish)) continue
-    last = i
-    break
-  }
-
-  if (last < 0) return { mode: "all", count: list.data.length }
-  const next = list.data[last + 1]?.info.id
-  if (!next) return { mode: "all", count: list.data.length }
-  return { mode: "cut", count: list.data.length, messageID: next }
-}
-
-const sourceid = async (client, sessionID) => {
-  const source = sessionID || (await client.session.create({})).data?.id
-  if (!source) throw new Error("Failed to create a new session.")
-  return source
+  await writeFile(
+    HANDOFF_FILE,
+    `${serialize({
+      type: "experimental-btw",
+      version: 2,
+      originSessionID: originSessionID ?? null,
+      tempSessionID,
+      prompt,
+      time: new Date().toISOString(),
+    })}\n`,
+    "utf8",
+  )
 }
 
 const sessionmessages = async (client, sessionID) => {
   if (!sessionID) return []
   const list = await client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined)
   return list?.data ?? []
-}
-
-const forktemp = async (client, sessionID) => {
-  const source = await sourceid(client, sessionID)
-  const cut = await cutoff(client, source)
-  const next = await client.session.fork({
-    sessionID: source,
-    ...(cut.mode === "cut" ? { messageID: cut.messageID } : {}),
-  })
-  if (next.error || !next.data?.id)
-    throw next.error ?? new Error("Failed to create temporary session.")
-  return next.data.id
-}
-
-const opentemp = async (client, sessionID) => {
-  const temp = await forktemp(client, sessionID)
-  await client.session.update({ sessionID: temp, title: sessiontitle() }).catch(() => undefined)
-
-  return temp
-}
-
-const selecttemp = async (client, sessionID) => {
-  const selected = await client.tui.selectSession({ sessionID })
-  if (selected?.error) throw selected.error
 }
 
 const enter = async (client, sessionID, prompt) => {
@@ -175,7 +126,8 @@ export default {
         },
         async execute(args) {
           if (!client) throw new Error("OpenCode client unavailable.")
-          await selecttemp(client, args.sessionID)
+          const selected = await client.tui.selectSession({ sessionID: args.sessionID })
+          if (selected?.error) throw selected.error
           return ""
         },
       }),
