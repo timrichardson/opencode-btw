@@ -329,7 +329,7 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_select_temp",
     ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      "opencode-bytheway is loaded.\nsession: ses_status",
+      "opencode-bytheway 0.3.5 is loaded.\nsession: ses_status",
     )
     expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
@@ -349,7 +349,7 @@ describe("opencode-bytheway tui plugin", () => {
         async showToast(args: Record<string, unknown>) {
           expect(args).toEqual({
             title: "opencode-bytheway",
-            message: "opencode-bytheway is loaded.\nsession: ses_status",
+            message: "opencode-bytheway 0.3.5 is loaded.\nsession: ses_status",
             variant: "info",
             duration: 6000,
           })
@@ -754,6 +754,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     cmd(rows(), "btw.open").onSelect()
     await tick()
+    await tick()
 
     cmd(rows(), "btw.merge").onSelect()
     await tick()
@@ -779,6 +780,7 @@ describe("opencode-bytheway tui plugin", () => {
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     cmd(rows(), "btw.open").onSelect()
+    await tick()
     await tick()
 
     cmd(rows(), "btw.merge").onSelect()

@@ -1,5 +1,6 @@
 import { appendFile, writeFile } from "node:fs/promises"
 import { tool } from "@opencode-ai/plugin"
+import packageJson from "./package.json" assert { type: "json" }
 
 const EXPERIMENTAL_BTW_HANDLED = "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__"
 const BTW_STATUS_HANDLED = "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__"
@@ -31,7 +32,10 @@ const experimentalcmd = {
   template: "/btw-prompt",
 }
 
-const statustext = (sessionID) => ["opencode-bytheway is loaded.", `session: ${sessionID ?? "<none>"}`].join("\n")
+const statustext = (sessionID) => [
+  `opencode-bytheway ${packageJson.version} is loaded.`,
+  `session: ${sessionID ?? "<none>"}`,
+].join("\n")
 
 const logserver = (stage, data = {}) => {
   const line = JSON.stringify({

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.5
+
+- refine the published package metadata description to better describe the Claude Code-inspired btw workflow
+- include the plugin version in `/btw-status` output so loaded builds are easier to identify in TUI
+
 ## 0.3.4
 
 - refine the published package metadata description to better describe the Claude Code-inspired btw workflow
