@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- add direct non-LLM dispatch for `/experimental-btw` while keeping the proven TUI handoff flow
+- remove temporary debug slash commands and trim unused server helpers
+- improve experimental runtime logging for live debugging and restore the file-based prompt handoff after the parent-linked refactor failed in the live host
+
 ## 0.2.3
 
 - add direct non-LLM dispatch for `/experimental-btw` while keeping the proven TUI handoff flow
