@@ -7,19 +7,19 @@
 
 ## 0.3.0
 
-- add direct non-LLM dispatch for `/experimental-btw` while keeping the proven TUI handoff flow
+- add direct non-LLM dispatch for `/btw-prompt` while keeping the proven TUI handoff flow
 - remove temporary debug slash commands and trim unused server helpers
 - improve experimental runtime logging for live debugging and restore the file-based prompt handoff after the parent-linked refactor failed in the live host
 
 ## 0.2.3
 
-- add direct non-LLM dispatch for `/experimental-btw` while keeping the proven TUI handoff flow
+- add direct non-LLM dispatch for `/btw-prompt` while keeping the proven TUI handoff flow
 - remove temporary debug slash commands and trim unused server helpers
 - improve experimental runtime logging for live debugging and restore the file-based prompt handoff after the parent-linked refactor failed in the live host
 
 ## 0.2.2
 
-- restore `/btw` to TUI-only ownership and move the seeded server-side entrypoint to `/experimental-btw`
+- restore `/btw` to TUI-only ownership and move the seeded server-side entrypoint to `/btw-prompt`
 
 ## 0.2.1
 
