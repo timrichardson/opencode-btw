@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- rename the experimental server-side prompt command to `/btw-prompt`
+- route `/btw-prompt` through the existing TUI-owned `/btw` open flow so the initial prompt runs inside the forked session
+- namespace and scope prompt handoff files to the origin session to avoid cross-session collisions during local testing
+
 ## 0.3.1
 
 - scope `/btw` command visibility to the current session so unrelated sessions do not incorrectly show `/btw_end`
