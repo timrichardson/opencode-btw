@@ -2,6 +2,9 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tool } from "@opencode-ai/plugin"
 
+const TEMP_DEBUG_FILE = "/tmp/opencode-bytheway-debug.json"
+const HANDOFF_FILE = "/tmp/opencode-bytheway-handoff.json"
+
 const slashbase = () => {
   const env = (globalThis.process?.env ?? {})
   const value = env.OPENCODE_BYTHEWAY_COMMAND?.trim().replace(/^\/+/, "").toLowerCase()
@@ -25,17 +28,78 @@ const experimentalcmd = {
     "Call the opencode_bytheway_plugin_open tool.",
     "Pass the full command arguments as the prompt field exactly as written.",
     "If there are no arguments, pass an empty string.",
-    "Then return only the plain text content from the tool result.",
-    "Do not return an object, JSON, markdown fencing, or text like [object Object].",
+    "After the tool call, do not add any extra text.",
   ].join(" "),
 }
 
-const experimentaldbgcmd = {
-  description: "Debug: open a temporary by-the-way session and write prompt diagnostics to a file",
+const experimentaldbgfreshjsoncmd = {
+  description: "Debug: create a fresh session, prompt it directly, and return diagnostics as JSON text",
   agent: "general",
   subtask: false,
   template: [
-    "Call the opencode_bytheway_plugin_debug_open tool.",
+    "Call the opencode_bytheway_plugin_debug_open_fresh_json tool.",
+    "Pass the full command arguments as the prompt field exactly as written.",
+    "If there are no arguments, pass an empty string.",
+    "Return the exact tool output verbatim.",
+  ].join(" "),
+}
+
+const experimentalprobecmd = {
+  description: "Debug: return a fixed string through the server tool bridge",
+  agent: "general",
+  subtask: false,
+  template: [
+    "Call the opencode_bytheway_plugin_probe_string tool.",
+    "Return the exact tool output verbatim.",
+  ].join(" "),
+}
+
+const experimentalprobeforkcmd = {
+  description: "Debug: fork a temp session and return a fixed string",
+  agent: "general",
+  subtask: false,
+  template: [
+    "Call the opencode_bytheway_plugin_probe_fork_string tool.",
+    "Return the exact tool output verbatim.",
+  ].join(" "),
+}
+
+const experimentalprobemessagescmd = {
+  description: "Debug: read session messages and return a fixed string",
+  agent: "general",
+  subtask: false,
+  template: [
+    "Call the opencode_bytheway_plugin_probe_messages_string tool.",
+    "Return the exact tool output verbatim.",
+  ].join(" "),
+}
+
+const experimentalprobeforkonlycmd = {
+  description: "Debug: fork a temp session without updating it and return a fixed string",
+  agent: "general",
+  subtask: false,
+  template: [
+    "Call the opencode_bytheway_plugin_probe_fork_only_string tool.",
+    "Return the exact tool output verbatim.",
+  ].join(" "),
+}
+
+const experimentalprobeforkupdatecmd = {
+  description: "Debug: fork and update a temp session and return a fixed string",
+  agent: "general",
+  subtask: false,
+  template: [
+    "Call the opencode_bytheway_plugin_probe_fork_update_string tool.",
+    "Return the exact tool output verbatim.",
+  ].join(" "),
+}
+
+const experimentalprobepromptcmd = {
+  description: "Debug: fork a temp session, prompt it, and return a fixed string",
+  agent: "general",
+  subtask: false,
+  template: [
+    "Call the opencode_bytheway_plugin_probe_prompt_string tool.",
     "Pass the full command arguments as the prompt field exactly as written.",
     "If there are no arguments, pass an empty string.",
     "Return the exact tool output verbatim.",
@@ -43,6 +107,7 @@ const experimentaldbgcmd = {
 }
 
 const sessiontitle = () => `/${openname()} session`
+const experimentaltitle = () => `/${openname()} experimental session`
 
 const collecttext = (parts = []) =>
   parts
@@ -50,6 +115,26 @@ const collecttext = (parts = []) =>
     .map((part) => part.text.trim())
     .filter(Boolean)
     .join("\n\n")
+
+const contexttext = (items = []) => {
+  const turns = items
+    .map((item) => {
+      const text = collecttext(item.parts)
+      if (!text) return
+      const role = item.info?.role === "assistant" ? "Assistant" : "User"
+      return `${role}:\n${text}`
+    })
+    .filter(Boolean)
+
+  if (!turns.length) return ""
+  return [
+    "Copied plain-text context from the original session.",
+    "Only user and assistant text is included below. Tool calls and hidden reasoning are omitted.",
+    "Use it as conversation context for the next prompt.",
+    "",
+    turns.join("\n\n"),
+  ].join("\n")
+}
 
 const stringify = (value) => {
   const seen = new WeakSet()
@@ -59,6 +144,40 @@ const stringify = (value) => {
     seen.add(item)
     return item
   })
+}
+
+const fallbacktext = (value) => {
+  if (typeof value === "string") return value.trim()
+  if (value == null) return ""
+  if (typeof value !== "object") return String(value)
+  try {
+    return stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+const promptmessage = (seeded) => {
+  const data = seeded?.data
+  if (!data || typeof data !== "object") return
+  if (!data.info || typeof data.info !== "object") return
+  if (!Array.isArray(data.parts)) return
+  return data
+}
+
+// The SDK contract for session.prompt() is an assistant-message envelope:
+// { info: AssistantMessage, parts: Part[] }.
+const promptresult = (seeded) => {
+  const message = promptmessage(seeded)
+  if (!message) return fallbacktext(seeded?.data)
+
+  const text = collecttext(message.parts)
+  if (text) return text
+
+  const structured = message.info?.structured_output
+  if (structured !== undefined) return fallbacktext(structured)
+
+  return fallbacktext(message)
 }
 
 const inspect = (value, depth = 0, seen = new WeakSet()) => {
@@ -84,69 +203,109 @@ const inspect = (value, depth = 0, seen = new WeakSet()) => {
   }
 }
 
-const extracttext = (value, seen = new WeakSet()) => {
-  if (typeof value === "string") return value.trim()
-  if (!value || typeof value !== "object") return ""
-  if (seen.has(value)) return ""
-  seen.add(value)
+const builddebugreport = (ctx, seeded, file) => ({
+  debug: "opencode-bytheway.prompt",
+  file,
+  tempDebugFile: TEMP_DEBUG_FILE,
+  ctx: {
+    sessionID: ctx.sessionID ?? null,
+    worktree: ctx.worktree ?? null,
+    directory: ctx.directory ?? null,
+  },
+  processCwd: process.cwd(),
+  extracted: promptresult(seeded),
+  seeded: inspect(seeded),
+  data: inspect(seeded?.data),
+})
 
-  if (Array.isArray(value)) {
-    return value.map((item) => extracttext(item, seen)).filter(Boolean).join("\n\n")
+const serialize = (value) => JSON.stringify(value, null, 2)
+
+const writehandoff = async (originSessionID, tempSessionID, reply) => {
+  const payload = {
+    type: "experimental-btw",
+    originSessionID: originSessionID ?? null,
+    tempSessionID,
+    reply,
+    time: new Date().toISOString(),
   }
-
-  if (typeof value.type === "string") {
-    if (value.type === "text" && typeof value.text === "string") return value.text.trim()
-    if (value.type !== "text") return ""
-  }
-
-  const fromparts = Array.isArray(value.parts) ? collecttext(value.parts) : ""
-  if (fromparts) return fromparts
-
-  for (const key of ["text", "content", "output", "message", "result", "response", "data"]) {
-    const next = extracttext(value[key], seen)
-    if (next) return next
-  }
-
-  for (const item of Object.values(value)) {
-    const next = extracttext(item, seen)
-    if (next) return next
-  }
-
-  return ""
+  await writeFile(HANDOFF_FILE, `${serialize(payload)}\n`, "utf8")
+  return payload
 }
-
-const plain = (value) => {
-  if (typeof value === "string") return value
-  if (value == null) return ""
-  if (typeof value !== "object") return String(value)
-  const extracted = extracttext(value)
-  if (extracted) return extracted
-  try {
-    return stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
-const debugprompt = (seeded) =>
-  JSON.stringify(
-    {
-      debug: "opencode-bytheway.prompt",
-      extracted: plain(collecttext(seeded?.data?.parts) || seeded?.data),
-      seeded: inspect(seeded),
-      data: inspect(seeded?.data),
-    },
-    null,
-    2,
-  )
 
 const writepromptdebug = async (ctx, seeded) => {
   const root = ctx.worktree || ctx.directory || process.cwd()
   const dir = join(root, ".opencode")
   const file = join(dir, "bytheway-debug.json")
+  const report = builddebugreport(ctx, seeded, file)
+  const text = serialize(report)
   await mkdir(dir, { recursive: true })
-  await writeFile(file, `${debugprompt(seeded)}\n`, "utf8")
-  return file
+  await writeFile(file, `${text}\n`, "utf8")
+  await writeFile(TEMP_DEBUG_FILE, `${text}\n`, "utf8")
+  return { file, report, text }
+}
+
+const writedebugstart = async (ctx, mode, sessionID, prompt) =>
+  writepromptdebug(ctx, {
+    data: {
+      debugPhase: "start",
+      mode,
+      sessionID: sessionID ?? null,
+      prompt,
+      note: "Initial marker before session/prompt work.",
+    },
+  })
+
+const errordata = (error) => {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack ?? null,
+    }
+  }
+  return { value: error }
+}
+
+const writebeforeprompt = async (ctx, mode, sessionID, targetSessionID, prompt) =>
+  writepromptdebug(ctx, {
+    data: {
+      debugPhase: "before-prompt",
+      mode,
+      sessionID: sessionID ?? null,
+      targetSessionID,
+      prompt,
+      note: "About to call client.session.prompt(...).",
+    },
+  })
+
+const writeprompterror = async (ctx, mode, sessionID, targetSessionID, prompt, error) =>
+  writepromptdebug(ctx, {
+    data: {
+      debugPhase: "prompt-error",
+      mode,
+      sessionID: sessionID ?? null,
+      targetSessionID,
+      prompt,
+      error: errordata(error),
+    },
+  })
+
+const promptwithdebug = async (client, ctx, mode, sessionID, targetSessionID, text) => {
+  await writebeforeprompt(ctx, mode, sessionID, targetSessionID, text)
+
+  try {
+    const seeded = await client.session.prompt({
+      path: { id: targetSessionID },
+      body: {
+        parts: [{ type: "text", text }],
+      },
+    })
+    if (seeded.error) throw seeded.error
+    return seeded
+  } catch (error) {
+    await writeprompterror(ctx, mode, sessionID, targetSessionID, text, error)
+    throw error
+  }
 }
 
 const cutoff = async (client, sessionID) => {
@@ -169,10 +328,20 @@ const cutoff = async (client, sessionID) => {
   return { mode: "cut", count: list.data.length, messageID: next }
 }
 
-const opentemp = async (client, sessionID) => {
+const sourceid = async (client, sessionID) => {
   const source = sessionID || (await client.session.create({})).data?.id
   if (!source) throw new Error("Failed to create a new session.")
+  return source
+}
 
+const sessionmessages = async (client, sessionID) => {
+  if (!sessionID) return []
+  const list = await client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined)
+  return list?.data ?? []
+}
+
+const forktemp = async (client, sessionID) => {
+  const source = await sourceid(client, sessionID)
   const cut = await cutoff(client, source)
   const next = await client.session.fork({
     sessionID: source,
@@ -180,48 +349,116 @@ const opentemp = async (client, sessionID) => {
   })
   if (next.error || !next.data?.id)
     throw next.error ?? new Error("Failed to create temporary session.")
+  return next.data.id
+}
 
-  const temp = next.data.id
+const opentemp = async (client, sessionID) => {
+  const temp = await forktemp(client, sessionID)
   await client.session.update({ sessionID: temp, title: sessiontitle() }).catch(() => undefined)
-
-  const selected = await client.tui.selectSession({ sessionID: temp })
-  if (selected?.error) throw selected.error
 
   return temp
 }
 
-const enter = async (client, sessionID, prompt) => {
-  const temp = await opentemp(client, sessionID)
-
-  const text = prompt.trim()
-  if (!text) return ""
-
-  const seeded = await client.session.prompt({
-    sessionID: temp,
-    parts: [{ type: "text", text }],
-  })
-  if (seeded.error) throw seeded.error
-
-  return plain(collecttext(seeded.data?.parts) || seeded.data)
+const selecttemp = async (client, sessionID) => {
+  const selected = await client.tui.selectSession({ sessionID })
+  if (selected?.error) throw selected.error
 }
 
-const enterdebug = async (client, ctx, sessionID, prompt) => {
-  const temp = await opentemp(client, sessionID)
+const enter = async (client, sessionID, prompt) => {
+  const temp = (await client.session.create({})).data?.id
+  if (!temp) throw new Error("Failed to create a temporary session.")
+
+  const copied = contexttext(await sessionmessages(client, sessionID))
+  if (copied) {
+    const injected = await client.session.prompt({
+      path: { id: temp },
+      body: {
+        noReply: true,
+        parts: [{ type: "text", text: copied }],
+      },
+    })
+    if (injected.error) throw injected.error
+  }
 
   const text = prompt.trim()
   if (!text) {
-    const file = await writepromptdebug(ctx, { note: "No prompt provided." })
-    return `Wrote debug payload to ${file}`
+    await writehandoff(sessionID, temp, "")
+    await client.session.update({ sessionID: temp, title: experimentaltitle() }).catch(() => undefined)
+    return ""
   }
 
   const seeded = await client.session.prompt({
-    sessionID: temp,
-    parts: [{ type: "text", text }],
+    path: { id: temp },
+    body: {
+      parts: [{ type: "text", text }],
+    },
   })
   if (seeded.error) throw seeded.error
 
-  const file = await writepromptdebug(ctx, seeded)
-  return `Wrote debug payload to ${file}`
+  await writehandoff(sessionID, temp, promptresult(seeded))
+  await client.session.update({ sessionID: temp, title: experimentaltitle() }).catch(() => undefined)
+
+  return ""
+}
+
+const probefork = async (client, sessionID) => {
+  await opentemp(client, sessionID)
+  return "FORK_OK"
+}
+
+const probemessages = async (client, sessionID) => {
+  const source = await sourceid(client, sessionID)
+  await cutoff(client, source)
+  return "MESSAGES_OK"
+}
+
+const probeforkonly = async (client, sessionID) => {
+  await forktemp(client, sessionID)
+  return "FORK_ONLY_OK"
+}
+
+const probeforkupdate = async (client, sessionID) => {
+  const temp = await forktemp(client, sessionID)
+  await client.session.update({ sessionID: temp, title: sessiontitle() }).catch(() => undefined)
+  return "FORK_UPDATE_OK"
+}
+
+const probeprompt = async (client, sessionID, prompt) => {
+  const temp = await opentemp(client, sessionID)
+  const text = prompt.trim() || "noop"
+
+  const seeded = await client.session.prompt({
+    path: { id: temp },
+    body: {
+      parts: [{ type: "text", text }],
+    },
+  })
+  if (seeded.error) throw seeded.error
+
+  return "PROMPT_OK"
+}
+
+const enterfreshdebugjson = async (client, ctx, sessionID, prompt) => {
+  const text = prompt.trim()
+  await writedebugstart(ctx, "fresh-json", sessionID, text)
+
+  const created = await client.session.create({})
+  if (created.error || !created.data?.id) {
+    const error = created.error ?? new Error("Failed to create debug session.")
+    await writeprompterror(ctx, "fresh-json", sessionID, null, text, error)
+    throw error
+  }
+
+  const fresh = created.data.id
+  if (!text) {
+    const written = await writepromptdebug(ctx, { data: { note: "No prompt provided.", sessionID: fresh } })
+    return written.text
+  }
+
+  const seeded = await promptwithdebug(client, ctx, "fresh-json", sessionID, fresh, text)
+
+  const written = await writepromptdebug(ctx, seeded)
+  return written.text
 }
 
 export default {
@@ -242,24 +479,90 @@ export default {
         },
         async execute(args, ctx) {
           if (!client) throw new Error("OpenCode client unavailable.")
-          return plain(await enter(client, ctx.sessionID, args.prompt ?? ""))
+          return await enter(client, ctx.sessionID, args.prompt ?? "")
         },
       }),
-      opencode_bytheway_plugin_debug_open: tool({
-        description: "Open a temporary by-the-way session and write prompt diagnostics to a file",
+      opencode_bytheway_plugin_select_temp: tool({
+        description: "Select an existing temporary by-the-way session in the TUI",
+        args: {
+          sessionID: tool.schema.string(),
+        },
+        async execute(args) {
+          if (!client) throw new Error("OpenCode client unavailable.")
+          await selecttemp(client, args.sessionID)
+          return ""
+        },
+      }),
+      opencode_bytheway_plugin_probe_string: tool({
+        description: "Return a fixed probe string for bridge debugging",
+        args: {},
+        async execute() {
+          return "OPEN_OK"
+        },
+      }),
+      opencode_bytheway_plugin_probe_fork_string: tool({
+        description: "Fork a temporary session and return a fixed probe string",
+        args: {},
+        async execute(_, ctx) {
+          if (!client) throw new Error("OpenCode client unavailable.")
+          return await probefork(client, ctx.sessionID)
+        },
+      }),
+      opencode_bytheway_plugin_probe_messages_string: tool({
+        description: "Read session messages and return a fixed probe string",
+        args: {},
+        async execute(_, ctx) {
+          if (!client) throw new Error("OpenCode client unavailable.")
+          return await probemessages(client, ctx.sessionID)
+        },
+      }),
+      opencode_bytheway_plugin_probe_fork_only_string: tool({
+        description: "Fork a temporary session without updating it and return a fixed probe string",
+        args: {},
+        async execute(_, ctx) {
+          if (!client) throw new Error("OpenCode client unavailable.")
+          return await probeforkonly(client, ctx.sessionID)
+        },
+      }),
+      opencode_bytheway_plugin_probe_fork_update_string: tool({
+        description: "Fork and update a temporary session and return a fixed probe string",
+        args: {},
+        async execute(_, ctx) {
+          if (!client) throw new Error("OpenCode client unavailable.")
+          return await probeforkupdate(client, ctx.sessionID)
+        },
+      }),
+      opencode_bytheway_plugin_probe_prompt_string: tool({
+        description: "Fork a temporary session, prompt it, and return a fixed probe string",
         args: {
           prompt: tool.schema.string().optional(),
         },
         async execute(args, ctx) {
           if (!client) throw new Error("OpenCode client unavailable.")
-          return await enterdebug(client, ctx, ctx.sessionID, args.prompt ?? "")
+          return await probeprompt(client, ctx.sessionID, args.prompt ?? "")
+        },
+      }),
+      opencode_bytheway_plugin_debug_open_fresh_json: tool({
+        description: "Create a fresh session, write prompt diagnostics, and return them as JSON text",
+        args: {
+          prompt: tool.schema.string().optional(),
+        },
+        async execute(args, ctx) {
+          if (!client) throw new Error("OpenCode client unavailable.")
+          return await enterfreshdebugjson(client, ctx, ctx.sessionID, args.prompt ?? "")
         },
       }),
     },
     async config(cfg) {
       cfg.command = {
         "experimental-btw": experimentalcmd,
-        "experimental-btw-debug": experimentaldbgcmd,
+        "experimental-btw-probe-string": experimentalprobecmd,
+        "experimental-btw-probe-messages-string": experimentalprobemessagescmd,
+        "experimental-btw-probe-fork-only-string": experimentalprobeforkonlycmd,
+        "experimental-btw-probe-fork-update-string": experimentalprobeforkupdatecmd,
+        "experimental-btw-probe-fork-string": experimentalprobeforkcmd,
+        "experimental-btw-probe-prompt-string": experimentalprobepromptcmd,
+        "experimental-btw-fresh-debug-json": experimentaldbgfreshjsoncmd,
         "btw-status": statuscmd,
         ...cfg.command,
       }

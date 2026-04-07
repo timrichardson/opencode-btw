@@ -1,5 +1,6 @@
 import { TextAttributes } from "@opentui/core";
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
+import { appendFile, readFile, unlink } from "node:fs/promises";
 
 declare namespace JSX {
   interface IntrinsicElements {
@@ -9,6 +10,9 @@ declare namespace JSX {
 }
 
 const id = "opencode-bytheway";
+const toastLogFile = "/tmp/opencode-bytheway-toast.log";
+const eventLogFile = "/tmp/opencode-bytheway-event.log";
+const handoffFile = "/tmp/opencode-bytheway-handoff.json";
 
 const slashbase = () => {
   const env = (globalThis as typeof globalThis & {
@@ -26,6 +30,7 @@ const slash = (name: string) => `/${name}`;
 const openname = () => slashbase();
 const endname = () => `${slashbase()}_end`;
 const mergename = () => `${slashbase()}_merge`;
+const experimentaltitle = () => `${slash(openname())} experimental session`;
 
 type Spawn =
   | { mode: "all"; count: number; boundary?: string }
@@ -90,6 +95,38 @@ const msg = (err: unknown) => {
 const tui: TuiPlugin = async (api) => {
   let btw: Btw | undefined;
   let resolving: Promise<Btw | undefined> | undefined;
+
+  const toast = (input: { variant?: "info" | "success" | "warning" | "error"; title?: string; message: string; duration?: number }) => {
+    api.ui.toast(input);
+    const route = api.route.current;
+    const currentSessionID = route.name === "session" && typeof route.params?.sessionID === "string"
+      ? route.params.sessionID
+      : undefined;
+    const line = JSON.stringify({
+      time: new Date().toISOString(),
+      variant: input.variant ?? "info",
+      title: input.title ?? null,
+      message: input.message,
+      route: route.name,
+      sessionID: currentSessionID ?? null,
+    });
+    void appendFile(toastLogFile, `${line}\n`, "utf8").catch(() => undefined);
+  };
+
+  const logevent = (stage: string, data: Record<string, unknown>) => {
+    const route = api.route.current;
+    const currentSessionID = route.name === "session" && typeof route.params?.sessionID === "string"
+      ? route.params.sessionID
+      : undefined;
+    const line = JSON.stringify({
+      time: new Date().toISOString(),
+      stage,
+      route: route.name,
+      sessionID: currentSessionID ?? null,
+      ...data,
+    });
+    void appendFile(eventLogFile, `${line}\n`, "utf8").catch(() => undefined);
+  };
 
   const load = () => {
     if (btw) return btw;
@@ -212,6 +249,40 @@ const tui: TuiPlugin = async (api) => {
     ].join("\n");
   };
 
+  const latestreply = (items: SessionMessage[]) => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.info.role !== "assistant") continue;
+      const text = collecttext(item.parts);
+      if (text) return text;
+    }
+  };
+
+  const readhandoff = async () => {
+    try {
+      const text = await readFile(handoffFile, "utf8");
+      const value = JSON.parse(text);
+      if (!value || typeof value !== "object") return;
+      if (value.type !== "experimental-btw") return;
+      if (typeof value.tempSessionID !== "string") return;
+      if (value.originSessionID !== null && typeof value.originSessionID !== "string") return;
+      if (typeof value.reply !== "string") return;
+      return value as {
+        type: "experimental-btw";
+        originSessionID: string | null;
+        tempSessionID: string;
+        reply: string;
+        time?: string;
+      };
+    } catch {
+      return;
+    }
+  };
+
+  const clearhandoff = async () => {
+    await unlink(handoffFile).catch(() => undefined);
+  };
+
   const fork = async (sessionID: string, cut: Spawn) => {
     const next = await api.client.session.fork({
       sessionID,
@@ -233,14 +304,14 @@ const tui: TuiPlugin = async (api) => {
     const sessionID = current();
     const state = await getstate();
     if (state && state.temp === sessionID) {
-      api.ui.toast({
+      toast({
         variant: "warning",
         message: `Already inside a ${slash(openname())} session. Run ${slash(endname())} to return.`,
       });
       return;
     }
     if (state) {
-      api.ui.toast({
+      toast({
         variant: "warning",
         message: `A ${slash(openname())} session is already active. Run ${slash(endname())} first.`,
       });
@@ -267,7 +338,7 @@ const tui: TuiPlugin = async (api) => {
         }),
       );
     } catch (err) {
-      api.ui.toast({
+      toast({
         variant: "error",
         message: msg(err),
       });
@@ -277,7 +348,7 @@ const tui: TuiPlugin = async (api) => {
   const merge = async () => {
     const state = await getstate();
     if (!state) {
-      api.ui.toast({
+      toast({
         variant: "warning",
         message: `No active ${slash(openname())} session.`,
       });
@@ -285,7 +356,7 @@ const tui: TuiPlugin = async (api) => {
     }
 
     if (current() !== state.temp) {
-      api.ui.toast({
+      toast({
         variant: "warning",
         message: `Run ${slash(mergename())} from inside the active ${slash(openname())} session.`,
       });
@@ -314,7 +385,7 @@ const tui: TuiPlugin = async (api) => {
         result = { error: new Error("Failed to delete the temp session.") };
       }
       if (result?.error) {
-        api.ui.toast({
+        toast({
           variant: "error",
           message: text
             ? `Merged back from ${slash(openname())}, but failed to delete the temp session. Run ${slash(endname())} to clean it up.`
@@ -324,14 +395,14 @@ const tui: TuiPlugin = async (api) => {
       }
 
       save(undefined);
-      api.ui.toast({
+      toast({
         variant: "info",
         message: text
           ? `Merged back from ${slash(openname())} session.`
           : `No new text to merge. Returned from ${slash(openname())} session.`,
       });
     } catch (err) {
-      api.ui.toast({
+      toast({
         variant: "error",
         message: msg(err),
       });
@@ -341,7 +412,7 @@ const tui: TuiPlugin = async (api) => {
   const end = async () => {
     const state = await getstate();
     if (!state) {
-      api.ui.toast({
+      toast({
         variant: "warning",
         message: `No active ${slash(openname())} session.`,
       });
@@ -356,14 +427,14 @@ const tui: TuiPlugin = async (api) => {
       result = { error: new Error("Failed to delete the temp session.") };
     }
     if (result?.error) {
-      api.ui.toast({
+      toast({
         variant: "error",
         message: `Returned from ${slash(openname())}, but failed to delete the temp session.`,
       });
       return;
     }
     save(undefined);
-    api.ui.toast({
+    toast({
       variant: "info",
       message: `Returned from ${slash(openname())} session.`,
     });
@@ -397,6 +468,127 @@ const tui: TuiPlugin = async (api) => {
       },
     },
   });
+
+  const seenExperimental = new Set<string>();
+  const pendingExperimental = new Set<string>();
+  const adoptExperimental = async (sessionID: string) => {
+    logevent("adopt:start", { targetSessionID: sessionID });
+    if (seenExperimental.has(sessionID)) {
+      logevent("adopt:skip_seen", { targetSessionID: sessionID });
+      return;
+    }
+    if (pendingExperimental.has(sessionID)) {
+      logevent("adopt:skip_pending", { targetSessionID: sessionID });
+      return;
+    }
+    if (load()) {
+      logevent("adopt:skip_active", { targetSessionID: sessionID });
+      return;
+    }
+
+    const originSessionID = current();
+    if (!originSessionID || originSessionID === sessionID) {
+      logevent("adopt:skip_origin", { targetSessionID: sessionID, originSessionID: originSessionID ?? null });
+      return;
+    }
+
+    pendingExperimental.add(sessionID);
+
+    try {
+      const handoff = await readhandoff();
+      logevent("adopt:fetched_handoff", {
+        targetSessionID: sessionID,
+        handoffSessionID: handoff?.tempSessionID ?? null,
+        handoffOriginSessionID: handoff?.originSessionID ?? null,
+      });
+      if (!handoff || handoff.tempSessionID !== sessionID || handoff.originSessionID !== originSessionID) {
+        logevent("adopt:skip_handoff", {
+          targetSessionID: sessionID,
+          handoffSessionID: handoff?.tempSessionID ?? null,
+          handoffOriginSessionID: handoff?.originSessionID ?? null,
+        });
+        return;
+      }
+
+      seenExperimental.add(sessionID);
+      logevent("adopt:accepted", { targetSessionID: sessionID, originSessionID, marker: "handoff" });
+
+      const currentSession = await api.client.session.get({ sessionID }).catch(() => undefined);
+      const title = currentSession?.data?.title;
+      logevent("adopt:fetched_session", { targetSessionID: sessionID, title: title ?? null });
+      const temp = await messages(sessionID);
+      logevent("adopt:fetched_messages", { targetSessionID: sessionID, count: temp.length });
+      save({ origin: originSessionID, temp: sessionID, baseCount: temp.length });
+      api.route.navigate("session", { sessionID });
+      logevent("adopt:navigated", { targetSessionID: sessionID });
+
+      const reply = handoff.reply || latestreply(temp);
+      const DialogAlert = api.ui.DialogAlert;
+      api.ui.dialog.setSize("large");
+      api.ui.dialog.replace(() =>
+        DialogAlert({
+          title: `Entered Experimental ${slash(openname())} Session`,
+          message: reply
+            ? [
+                `You are now in a temporary experimental ${slash(openname())} session in this same terminal.`,
+                "",
+                "Initial reply:",
+                reply,
+              ].join("\n")
+            : `You are now in a temporary experimental ${slash(openname())} session in this same terminal.`,
+          onConfirm: () => {
+            api.ui.dialog.clear();
+          },
+        }),
+      );
+      await clearhandoff();
+      logevent("adopt:dialog", { targetSessionID: sessionID, reply: reply ?? null });
+    } catch (err) {
+      seenExperimental.delete(sessionID);
+      logevent("adopt:error", { targetSessionID: sessionID, error: msg(err) });
+      toast({
+        variant: "error",
+        message: msg(err),
+      });
+    } finally {
+      pendingExperimental.delete(sessionID);
+    }
+  };
+
+  const offCreated = api.event.on("session.created", (event) => {
+    logevent("event:session.created", {
+      targetSessionID: event.properties.sessionID,
+      title: event.properties.info.title ?? null,
+    });
+    void adoptExperimental(event.properties.sessionID);
+  });
+  const offUpdated = api.event.on("session.updated", (event) => {
+    logevent("event:session.updated", {
+      targetSessionID: event.properties.sessionID,
+      title: event.properties.info.title ?? null,
+    });
+    void adoptExperimental(event.properties.sessionID);
+  });
+  const offMessageUpdated = api.event.on("message.updated", (event) => {
+    logevent("event:message.updated", {
+      targetSessionID: event.properties.sessionID,
+      messageID: event.properties.info.id,
+      role: event.properties.info.role,
+    });
+    void adoptExperimental(event.properties.sessionID);
+  });
+  const offPartUpdated = api.event.on("message.part.updated", (event) => {
+    logevent("event:message.part.updated", {
+      targetSessionID: event.properties.sessionID,
+      partType: event.properties.part.type,
+      messageID: event.properties.part.messageID,
+    });
+    void adoptExperimental(event.properties.sessionID);
+  });
+  api.lifecycle.onDispose(offCreated);
+  api.lifecycle.onDispose(offUpdated);
+  api.lifecycle.onDispose(offMessageUpdated);
+  api.lifecycle.onDispose(offPartUpdated);
 
   api.command.register(() => {
     const sessionID = current();

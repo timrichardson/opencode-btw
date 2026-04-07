@@ -4,13 +4,14 @@
 
 This repository contains the standalone `opencode-bytheway` OpenCode plugin.
 
-It provides the `/btw`, `/btw_merge`, and `/btw_end` workflows for temporary side sessions, plus an experimental server-side `/experimental-btw` entrypoint.
+It provides the `/btw`, `/btw_merge`, and `/btw_end` workflows for temporary side sessions, plus an experimental server-side `/experimental-btw` entrypoint that copies plain-text context into a fresh session and a detached `/experimental-btw-fresh-debug-json` debug probe.
 
 ## Important Files
 
-- `index.js`: server-side plugin entry. Defines the plugin `id`, the local `btw_status` development tool, and the experimental `/experimental-btw` command.
-- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw_merge`, and `/btw_end` slash commands, session state, and navigation live.
+- `index.js`: server-side plugin entry. Defines the plugin `id`, the local `btw_status` development tool, the experimental `/experimental-btw` command, and the detached `/experimental-btw-fresh-debug-json` debug command.
+- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw_merge`, and `/btw_end` slash commands, session state, navigation, and event-driven experimental handoff live.
 - `tui.test.tsx`: Bun test coverage for the TUI behavior.
+- `server.debug.test.ts`: focused Bun harness for debugging the experimental server-side open tool in-process.
 - `scripts/build.ts`: builds `tui.tsx` into `dist/tui.js`.
 - `dist/tui.js`: built artifact published by the package. Rebuild it after changing `tui.tsx`.
 
@@ -29,6 +30,7 @@ Use Bun for local work.
 bun install --ignore-scripts
 bun run build
 bun run test
+bun run test:server-debug
 ```
 
 Useful extra check before release work:

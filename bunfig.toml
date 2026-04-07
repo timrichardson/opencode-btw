@@ -1,0 +1,5 @@
+[jsx]
+runtime = "automatic"
+importSource = "@opentui/solid"
+# This forces Bun to look for 'jsx' instead of 'jsxDEV'
+development = false

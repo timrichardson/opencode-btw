@@ -36,6 +36,7 @@
   ],
   "scripts": {
     "build": "bun ./scripts/build.ts",
+    "test:server-debug": "bun test ./server.debug.test.ts",
     "test": "NODE_ENV=production bun test --preload @opentui/solid/runtime-plugin-support --conditions=browser ./tui.test.tsx",
     "prepublishOnly": "bun run build && bun run test"
   },
