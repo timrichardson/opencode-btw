@@ -171,9 +171,9 @@ const tui: TuiPlugin = async (api) => {
     return sessionID;
   };
 
-  const currentactive = (sessionID: string | undefined, state?: Btw) => {
+  const currenttemp = (sessionID: string | undefined, state?: Btw) => {
     if (!sessionID || !state) return;
-    if (state.temp === sessionID || state.origin === sessionID) return state;
+    if (state.temp === sessionID) return state;
   };
 
   const messages = async (sessionID: string): Promise<SessionMessage[]> => {
@@ -518,9 +518,9 @@ const tui: TuiPlugin = async (api) => {
 
   api.command.register(() => {
     const sessionID = current();
-    const state = currentactive(sessionID, load());
-    const active = Boolean(state);
-    const inbtw = Boolean(indicator(sessionID, state));
+    const tempState = currenttemp(sessionID, load());
+    const active = Boolean(tempState);
+    const inbtw = Boolean(indicator(sessionID, tempState));
 
     return [
       {

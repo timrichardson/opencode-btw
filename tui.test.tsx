@@ -329,7 +329,7 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_select_temp",
     ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      "opencode-bytheway 0.3.5 is loaded.\nsession: ses_status",
+      "opencode-bytheway 0.3.6 is loaded.\nsession: ses_status",
     )
     expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
@@ -349,7 +349,7 @@ describe("opencode-bytheway tui plugin", () => {
         async showToast(args: Record<string, unknown>) {
           expect(args).toEqual({
             title: "opencode-bytheway",
-            message: "opencode-bytheway 0.3.5 is loaded.\nsession: ses_status",
+            message: "opencode-bytheway 0.3.6 is loaded.\nsession: ses_status",
             variant: "info",
             duration: 6000,
           })
@@ -572,6 +572,17 @@ describe("opencode-bytheway tui plugin", () => {
 
   test("shows /btw and hides /btw-end in an unrelated session even if another btw state is saved", async () => {
     const { api, kv, rows } = setup({ sessionID: "ses_other" })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+
+    expect(cmd(rows(), "btw.open")?.hidden).toBe(false)
+    expect(cmd(rows(), "btw.merge")?.hidden).toBe(true)
+    expect(cmd(rows(), "btw.end")?.hidden).toBe(true)
+  })
+
+  test("shows /btw and hides /btw-end on the origin session of an active btw state", async () => {
+    const { api, kv, rows } = setup({ sessionID: "ses_main" })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
@@ -870,6 +881,7 @@ describe("opencode-bytheway tui plugin", () => {
     })}\n`)
 
     cmd(rows(), "btw.open").onSelect()
+    await tick()
     await tick()
 
     expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_exp_origin_b", temp: "ses_btw", baseCount: 0 })

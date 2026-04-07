@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6
+
+- keep `/btw` and `/btw-prompt` visible on the origin session even while a temporary `/btw` session is active
+- continue to restrict `/btw-merge` and `/btw-end` to the active temp session where they actually work
+
 ## 0.3.5
 
 - refine the published package metadata description to better describe the Claude Code-inspired btw workflow
