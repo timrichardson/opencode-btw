@@ -2,6 +2,7 @@ import { appendFile, writeFile } from "node:fs/promises"
 import { tool } from "@opencode-ai/plugin"
 
 const EXPERIMENTAL_BTW_HANDLED = "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__"
+const BTW_STATUS_HANDLED = "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__"
 const HANDOFF_FILE = "/tmp/opencode-bytheway-handoff.json"
 const SERVER_LOG_FILE = "/tmp/opencode-bytheway-server.log"
 const RUNTIME_MARKER = "server-file-handoff-prompt-v1"
@@ -17,8 +18,7 @@ const openname = () => slashbase()
 
 const statuscmd = {
   description: "Check whether the opencode-bytheway plugin is loaded",
-  agent: "general",
-  template: "Call the btw_status tool and return its output.",
+  template: "/btw-status",
 }
 
 const experimentalcmd = {
@@ -27,6 +27,8 @@ const experimentalcmd = {
 }
 
 const experimentaltitle = () => `/${openname()} experimental session`
+
+const statustext = (sessionID) => ["opencode-bytheway is loaded.", `session: ${sessionID ?? "<none>"}`].join("\n")
 
 const collecttext = (parts = []) =>
   parts
@@ -143,7 +145,7 @@ export default {
         description: "Report plugin status for local development",
         args: {},
         async execute(_, ctx) {
-          return ["opencode-bytheway is loaded.", `session: ${ctx.sessionID ?? "<none>"}`].join("\n")
+          return statustext(ctx.sessionID)
         },
       }),
       opencode_bytheway_plugin_open: tool({
@@ -177,6 +179,17 @@ export default {
       }
     },
     "command.execute.before": async (input) => {
+      if (input.command === "btw-status") {
+        if (!client) throw new Error("OpenCode client unavailable.")
+        const message = statustext(input.sessionID)
+        await client.tui.showToast({
+          title: "opencode-bytheway",
+          message,
+          variant: "info",
+          duration: 6000,
+        }).catch(() => undefined)
+        throw new Error(BTW_STATUS_HANDLED)
+      }
       if (input.command !== "experimental-btw") return
       if (!client) throw new Error("OpenCode client unavailable.")
       await logserver("command.execute.before", {

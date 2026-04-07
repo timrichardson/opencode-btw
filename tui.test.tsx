@@ -335,10 +335,31 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cfg.command.btw).toBeUndefined()
     expect(cfg.command["btw-status"]).toEqual({
       description: "Check whether the opencode-bytheway plugin is loaded",
-      agent: "general",
-      template: "Call the btw_status tool and return its output.",
+      template: "/btw-status",
     })
     expect(cfg.command.existing).toEqual({ description: "keep" })
+  })
+
+  test("btw-status command executes directly in command.execute.before and shows a toast", async () => {
+    const client: any = {
+      tui: {
+        async showToast(args: Record<string, unknown>) {
+          expect(args).toEqual({
+            title: "opencode-bytheway",
+            message: "opencode-bytheway is loaded.\nsession: ses_main",
+            variant: "info",
+            duration: 6000,
+          })
+          return { data: true }
+        },
+      },
+    }
+
+    const server = await serverPlugin.server({ client })
+    const hook = server["command.execute.before"]
+    await expect(hook?.({ command: "btw-status", sessionID: "ses_main", arguments: "" }, { parts: [] })).rejects.toThrow(
+      "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__",
+    )
   })
 
   test("opencode_bytheway_plugin_open tool creates a fresh temp session, copies context, writes the prompt handoff, and returns no origin-session text", async () => {
@@ -593,6 +614,17 @@ describe("opencode-bytheway tui plugin", () => {
   test("shows /btw from home and hides /btw_end", async () => {
     const { api, rows } = setup({ session: false })
     await plugin.tui(api, undefined, { state: "first" } as any)
+
+    expect(cmd(rows(), "btw.open")?.hidden).toBe(false)
+    expect(cmd(rows(), "btw.merge")?.hidden).toBe(true)
+    expect(cmd(rows(), "btw.end")?.hidden).toBe(true)
+  })
+
+  test("shows /btw and hides /btw_end in an unrelated session even if another btw state is saved", async () => {
+    const { api, kv, rows } = setup({ sessionID: "ses_other" })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
 
     expect(cmd(rows(), "btw.open")?.hidden).toBe(false)
     expect(cmd(rows(), "btw.merge")?.hidden).toBe(true)

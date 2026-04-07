@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- scope `/btw` command visibility to the current session so unrelated sessions do not incorrectly show `/btw_end`
+- handle `/btw-status` directly in the TUI with a toast instead of sending it through the agent loop
+
 ## 0.3.0
 
 - add direct non-LLM dispatch for `/experimental-btw` while keeping the proven TUI handoff flow

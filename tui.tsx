@@ -155,6 +155,11 @@ const tui: TuiPlugin = async (api) => {
     return sessionID;
   };
 
+  const currentactive = (sessionID: string | undefined, state?: Btw) => {
+    if (!sessionID || !state) return;
+    if (state.temp === sessionID || state.origin === sessionID) return state;
+  };
+
   const messages = async (sessionID: string): Promise<SessionMessage[]> => {
     const list = await api.client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined);
     if (!list?.data?.length) return [];
@@ -602,7 +607,7 @@ const tui: TuiPlugin = async (api) => {
 
   api.command.register(() => {
     const sessionID = current();
-    const state = load();
+    const state = currentactive(sessionID, load());
     const active = Boolean(state);
     const inbtw = Boolean(indicator(sessionID, state));
 
