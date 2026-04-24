@@ -19,6 +19,10 @@ function cmd(rows: any[], value: string) {
   return rows.find((row) => row.value === value)
 }
 
+async function select(rows: any[], value: string) {
+  await cmd(rows, value).onSelect()
+}
+
 function textMessage(id: string, role: "user" | "assistant", text: string, completed?: boolean) {
   return {
     info:
@@ -335,7 +339,7 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_select_temp",
     ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      "opencode-bytheway 0.3.9 is loaded.\nsession: ses_status",
+      "opencode-bytheway 0.3.10 is loaded.\nsession: ses_status",
     )
     expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
@@ -385,7 +389,7 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status",
-      serverVersion: "0.3.9",
+      serverVersion: "0.3.10",
     })
     rmSync(statusFile("ses_status"), { force: true })
   })
@@ -642,7 +646,7 @@ describe("opencode-bytheway tui plugin", () => {
       })
       expect(sessiontitle()).toBe("/aside session")
 
-      cmd(rows(), "btw.open").onSelect()
+      await select(rows(), "btw.open")
       await tick()
       await tick()
 
@@ -660,14 +664,14 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(cmd(rows(), "btw.status")?.slash).toBeUndefined()
 
-    cmd(rows(), "btw.status").onSelect()
+    await select(rows(), "btw.status")
     await tick()
     await tick()
 
     expect(toasts).toEqual([
       {
         title: "opencode-bytheway",
-        message: "opencode-bytheway 0.3.9 is loaded.\nsession: ses_status",
+        message: "opencode-bytheway 0.3.10 is loaded.\nsession: ses_status",
         variant: "info",
         duration: 6000,
       },
@@ -682,10 +686,10 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status_match",
-      serverVersion: "0.3.9",
+      serverVersion: "0.3.10",
     })}\n`)
 
-    cmd(rows(), "btw.status").onSelect()
+    await select(rows(), "btw.status")
     await tick()
     await tick()
 
@@ -694,8 +698,8 @@ describe("opencode-bytheway tui plugin", () => {
         title: "opencode-bytheway",
         message: [
           "opencode-bytheway is loaded.",
-          "server: 0.3.9",
-          "tui: 0.3.9",
+          "server: 0.3.10",
+          "tui: 0.3.10",
           "session: ses_status_match",
         ].join("\n"),
         variant: "info",
@@ -716,7 +720,7 @@ describe("opencode-bytheway tui plugin", () => {
       serverVersion: "0.3.6",
     })}\n`)
 
-    cmd(rows(), "btw.status").onSelect()
+    await select(rows(), "btw.status")
     await tick()
     await tick()
 
@@ -726,7 +730,7 @@ describe("opencode-bytheway tui plugin", () => {
         message: [
           "opencode-bytheway server and TUI plugin versions differ.",
           "server: 0.3.6",
-          "tui: 0.3.9",
+          "tui: 0.3.10",
           "Update both opencode.jsonc and tui.jsonc to the same package version.",
           "session: ses_status_mismatch",
         ].join("\n"),
@@ -774,7 +778,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
 
     expect(calls).toEqual(["get"])
@@ -788,7 +792,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -801,7 +805,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, created, kv, nav, rows, updated } = setup({ session: false })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -816,7 +820,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, kv, nav, rows, updated } = setup({ updateError: new Error("update failed") })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -830,7 +834,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, nav, rows, toasts } = setup({ session: false, createError: new Error("create failed") })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
 
     expect(toasts.at(-1)).toEqual({ variant: "error", message: "create failed" })
@@ -841,7 +845,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, fork, rows } = setup({ sourceTail: true })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -852,7 +856,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, fork, rows } = setup({ sourceBlank: true })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -864,7 +868,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, kv, nav, rows, toasts } = setup({ forkError: new Error("fork failed") })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
 
     expect(toasts.at(-1)).toEqual({ variant: "error", message: "fork failed" })
@@ -876,7 +880,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, kv, nav, rows, updated } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
 
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
@@ -889,7 +893,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, rows, views } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -902,7 +906,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, rows } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -917,7 +921,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, nav, rows, toasts } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.end").onSelect()
+    await select(rows(), "btw.end")
     await tick()
 
     expect(calls).toEqual(["get", "children"])
@@ -931,7 +935,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
 
-    cmd(rows(), "btw.end").onSelect()
+    await select(rows(), "btw.end")
     await tick()
 
     expect(calls).toEqual([])
@@ -956,11 +960,11 @@ describe("opencode-bytheway tui plugin", () => {
     })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
-    cmd(rows(), "btw.merge").onSelect()
+    await select(rows(), "btw.merge")
     await tick()
 
     expect(calls).toEqual(["get", "children", "messages", "fork", "update", "messages", "prompt", "delete"])
@@ -998,11 +1002,11 @@ describe("opencode-bytheway tui plugin", () => {
     })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
-    cmd(rows(), "btw.merge").onSelect()
+    await select(rows(), "btw.merge")
     await tick()
 
     expect(calls).toEqual(["get", "children", "messages", "fork", "update", "messages", "delete"])
@@ -1025,11 +1029,11 @@ describe("opencode-bytheway tui plugin", () => {
     })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
-    cmd(rows(), "btw.merge").onSelect()
+    await select(rows(), "btw.merge")
     await tick()
 
     expect(calls).toEqual(["get", "children", "messages", "fork", "update", "messages", "prompt"])
@@ -1042,11 +1046,11 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, rows, toasts } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     expect(toasts.at(-1)?.message).toBe("Already inside a /btw session. Run /btw-end to return.")
   })
@@ -1083,7 +1087,7 @@ describe("opencode-bytheway tui plugin", () => {
       prompt: "tell me about the anzacs",
     })}\n`)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -1115,7 +1119,7 @@ describe("opencode-bytheway tui plugin", () => {
       prompt: "tell me about the anzacs",
     })}\n`)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
@@ -1137,11 +1141,11 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, kv, nav, rows } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
-    cmd(rows(), "btw.end").onSelect()
+    await select(rows(), "btw.end")
     await tick()
 
     expect(calls).toEqual(["get", "children", "messages", "fork", "update", "delete"])
@@ -1156,7 +1160,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, kv, nav, rows } = setup({ sessionID: "ses_btw" })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.end").onSelect()
+    await select(rows(), "btw.end")
     await tick()
 
     expect(calls).toEqual(["get", "delete"])
@@ -1168,11 +1172,11 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, kv, nav, rows, toasts } = setup({ deleteError: new Error("nope") })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
     await tick()
 
-    cmd(rows(), "btw.end").onSelect()
+    await select(rows(), "btw.end")
     await tick()
 
     expect(calls).toEqual(["get", "children", "messages", "fork", "update", "delete"])
@@ -1191,10 +1195,10 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, kv, nav, rows, toasts } = setup({ deleteReject: new Error("boom") })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    cmd(rows(), "btw.open").onSelect()
+    await select(rows(), "btw.open")
     await tick()
 
-    cmd(rows(), "btw.end").onSelect()
+    await select(rows(), "btw.end")
     await tick()
 
     expect(calls).toEqual(["get", "children", "messages", "fork", "update", "delete"])

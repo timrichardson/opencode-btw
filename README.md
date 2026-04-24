@@ -39,7 +39,7 @@ The installer detects that this package has both server and TUI targets and upda
 Use `--force` if you need to replace an existing pinned version:
 
 ```bash
-opencode plugin opencode-bytheway@0.3.9 --global --force
+opencode plugin opencode-bytheway@0.3.10 --global --force
 ```
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
@@ -73,7 +73,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.9"]
+  "plugin": ["opencode-bytheway@0.3.10"]
 }
 ```
 
@@ -81,7 +81,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.9"]
+  "plugin": ["opencode-bytheway@0.3.10"]
 }
 ```
 
@@ -188,6 +188,6 @@ Suggested WebStorm workflow:
 Example:
 
 ```bash
-git tag v0.3.9
-git push origin v0.3.9
+git tag v0.3.10
+git push origin v0.3.10
 ```

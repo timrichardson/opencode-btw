@@ -633,7 +633,7 @@ const tui: TuiPlugin = async (api) => {
         category: "Session",
         hidden: active,
         onSelect: () => {
-          void enter();
+          return enter();
         },
       },
       {
@@ -644,7 +644,7 @@ const tui: TuiPlugin = async (api) => {
         hidden: !inbtw,
         suggested: inbtw,
         onSelect: () => {
-          void merge();
+          return merge();
         },
       },
       {
@@ -654,7 +654,7 @@ const tui: TuiPlugin = async (api) => {
         category: "Session",
         hidden: !inbtw,
         onSelect: () => {
-          void end();
+          return end();
         },
       },
       {
@@ -663,7 +663,7 @@ const tui: TuiPlugin = async (api) => {
         description: "Check whether the opencode-bytheway plugin is loaded",
         category: "Session",
         onSelect: () => {
-          void status();
+          return status();
         },
       },
     ];

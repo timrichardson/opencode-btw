@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.10
+
+- align CI and release workflows with Bun 1.3.13 to match local verification
+- make command-handler tests await command completion instead of depending on scheduler timing
+
 ## 0.3.9
 
 - document `opencode plugin opencode-bytheway --global` as the primary install path because it updates both server and TUI config files
