@@ -27,7 +27,9 @@ A plugin package opencode-btw already exists. It is not an attempt to emulate Cl
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-List this package in both config files for normal usage:
+List the same package spec in both config files for normal usage. If you pin or bump versions, update both files together; otherwise the server slash shims and the same-window TUI session handlers can run different plugin versions.
+
+The two entries are both required:
 - the TUI plugin implements `/btw`, `/btw-merge`, and `/btw-end`
 - the server plugin registers slash-command shims so typed `/btw`, `/btw-merge`, and `/btw-end` submissions dispatch to those TUI handlers in current OpenCode
 - the server plugin also provides `/btw-prompt some prompt` and the `btw-status` diagnostic command
@@ -48,11 +50,21 @@ Example `tui.jsonc`:
 }
 ```
 
-Optional version pin:
+Optional version pin, shown in both files:
+
+`opencode.jsonc`:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.7"]
+  "plugin": ["opencode-bytheway@0.3.8"]
+}
+```
+
+`tui.jsonc`:
+
+```jsonc
+{
+  "plugin": ["opencode-bytheway@0.3.8"]
 }
 ```
 
@@ -61,6 +73,7 @@ Restart OpenCode after installing or updating the plugin.
 Troubleshooting:
 - if `btw-status` or `/btw-prompt` appears but `/btw` does not open a side session, the package is loaded in `opencode.json[c]` but missing from `tui.json[c]`
 - if `/btw` appears only through autocomplete/direct selection but typed `/btw` submission does not work, the package is loaded in `tui.json[c]` but missing from `opencode.json[c]`
+- if `/btw-status` reports different server and TUI versions, update both config files to the same package spec and restart OpenCode
 - reload or restart OpenCode after changing either config
 
 Optional command-family override:
@@ -158,6 +171,6 @@ Suggested WebStorm workflow:
 Example:
 
 ```bash
-git tag v0.3.7
-git push origin v0.3.7
+git tag v0.3.8
+git push origin v0.3.8
 ```

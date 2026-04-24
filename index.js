@@ -66,6 +66,14 @@ const handofffile = (originSessionID) => {
     : `/tmp/opencode-bytheway-handoff-${token}.json`
 }
 
+const statusfile = (sessionID) => {
+  const namespace = handoffnamespace()
+  const token = (sessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_")
+  return namespace
+    ? `/tmp/opencode-bytheway-status-${namespace}-${token}.json`
+    : `/tmp/opencode-bytheway-status-${token}.json`
+}
+
 const writehandoff = async (originSessionID, prompt) => {
   const payload = {
     type: "experimental-btw",
@@ -81,6 +89,23 @@ const writehandoff = async (originSessionID, prompt) => {
     file,
     originSessionID: payload.originSessionID,
     promptLength: prompt.length,
+  })
+}
+
+const writestatushandoff = async (sessionID) => {
+  const payload = {
+    type: "opencode-bytheway-status",
+    version: 1,
+    sessionID: sessionID ?? null,
+    serverVersion: packageJson.version,
+    time: new Date().toISOString(),
+  }
+  const file = statusfile(sessionID)
+  await writeFile(file, `${serialize(payload)}\n`, "utf8")
+  await logserver("status_handoff.write", {
+    file,
+    sessionID: payload.sessionID,
+    serverVersion: payload.serverVersion,
   })
 }
 
@@ -107,31 +132,6 @@ const triggertuicommand = async (client, command, logstage = "tui.command") => {
   }
 
   throw new Error("OpenCode TUI command execution is unavailable.")
-}
-
-const showtuitoast = async (client, input, logstage = "tui.toast") => {
-  await logserver(`${logstage}:start`, { title: input.title ?? null, mode: "publish" })
-
-  if (typeof client.tui?.publish === "function") {
-    const published = await client.tui.publish({
-      body: {
-        type: "tui.toast.show",
-        properties: input,
-      },
-    })
-    if (published?.error) throw published.error
-    await logserver(`${logstage}:done`, { title: input.title ?? null, mode: "publish" })
-    return
-  }
-
-  if (typeof client.tui?.showToast === "function") {
-    const shown = await client.tui.showToast(input)
-    if (shown?.error) throw shown.error
-    await logserver(`${logstage}:done`, { title: input.title ?? null, mode: "showToast" })
-    return
-  }
-
-  throw new Error("OpenCode TUI toast notifications are unavailable.")
 }
 
 const triggerbtwopen = (client) => triggertuicommand(client, "btw.open", "experimental.enter:trigger_btw_open")
@@ -209,17 +209,12 @@ export default {
     "command.execute.before": async (input) => {
       if (input.command === "btw-status") {
         if (!client) throw new Error("OpenCode client unavailable.")
-        const message = statustext(input.sessionID)
         await logserver("command.execute.before", {
           command: input.command,
           originSessionID: input.sessionID ?? null,
         })
-        await showtuitoast(client, {
-          title: "opencode-bytheway",
-          message,
-          variant: "info",
-          duration: 6000,
-        }, "command.execute.before:show_status")
+        await writestatushandoff(input.sessionID)
+        await triggertuicommand(client, "btw.status", "command.execute.before:show_status")
         throw new Error(BTW_STATUS_HANDLED)
       }
       const tuiCommands = new Map([

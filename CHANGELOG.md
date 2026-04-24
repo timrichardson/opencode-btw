@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.8
+
+- report both server and TUI plugin versions from `/btw-status` so mismatched OpenCode config entries are easier to diagnose
+- document keeping `opencode.jsonc` and `tui.jsonc` pinned to the same plugin version
+
 ## 0.3.7
 
 - restore typed `/btw`, `/btw-merge`, and `/btw-end` dispatch for current OpenCode by routing server slash shims into the TUI command handlers

@@ -55,6 +55,14 @@ type SessionMessage = {
   }>;
 };
 
+type StatusHandoff = {
+  type: "opencode-bytheway-status";
+  version: 1;
+  sessionID: string | null;
+  serverVersion: string;
+  time?: string;
+};
+
 const ui = {
   muted: "#a5a5a5",
   accent: "#5f87ff",
@@ -87,6 +95,42 @@ const statustext = (sessionID: string | undefined) => [
   `session: ${sessionID ?? "<none>"}`,
 ].join("\n");
 
+const statusreport = (sessionID: string | undefined, handoff?: StatusHandoff) => {
+  if (!handoff) {
+    return {
+      title: "opencode-bytheway",
+      message: statustext(sessionID),
+      variant: "info" as const,
+    };
+  }
+
+  const same = handoff.serverVersion === packageJson.version;
+  if (same) {
+    return {
+      title: "opencode-bytheway",
+      message: [
+        "opencode-bytheway is loaded.",
+        `server: ${handoff.serverVersion}`,
+        `tui: ${packageJson.version}`,
+        `session: ${sessionID ?? "<none>"}`,
+      ].join("\n"),
+      variant: "info" as const,
+    };
+  }
+
+  return {
+    title: "opencode-bytheway version mismatch",
+    message: [
+      "opencode-bytheway server and TUI plugin versions differ.",
+      `server: ${handoff.serverVersion}`,
+      `tui: ${packageJson.version}`,
+      "Update both opencode.jsonc and tui.jsonc to the same package version.",
+      `session: ${sessionID ?? "<none>"}`,
+    ].join("\n"),
+    variant: "warning" as const,
+  };
+};
+
 const handoffnamespace = () => {
   const env = (globalThis as typeof globalThis & {
     process?: { env?: Record<string, string | undefined> };
@@ -102,6 +146,14 @@ const handofffile = (originSessionID: string | undefined) => {
   return namespace
     ? `/tmp/opencode-bytheway-handoff-${namespace}-${token}.json`
     : `/tmp/opencode-bytheway-handoff-${token}.json`;
+};
+
+const statusfile = (sessionID: string | undefined) => {
+  const namespace = handoffnamespace();
+  const token = (sessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_");
+  return namespace
+    ? `/tmp/opencode-bytheway-status-${namespace}-${token}.json`
+    : `/tmp/opencode-bytheway-status-${token}.json`;
 };
 
 const msg = (err: unknown) => {
@@ -312,6 +364,26 @@ const tui: TuiPlugin = async (api) => {
     await unlink(handofffile(originSessionID)).catch(() => undefined);
   };
 
+  const readstatushandoff = async (sessionID: string | undefined) => {
+    try {
+      const text = await readFile(statusfile(sessionID), "utf8");
+      const value = JSON.parse(text);
+      if (!value || typeof value !== "object") return;
+      if (value.type !== "opencode-bytheway-status") return;
+      if (value.version !== 1) return;
+      if (value.sessionID !== null && typeof value.sessionID !== "string") return;
+      if (value.sessionID !== (sessionID ?? null)) return;
+      if (typeof value.serverVersion !== "string") return;
+      return value as StatusHandoff;
+    } catch {
+      return;
+    }
+  };
+
+  const clearstatushandoff = async (sessionID: string | undefined) => {
+    await unlink(statusfile(sessionID)).catch(() => undefined);
+  };
+
   const fork = async (sessionID: string, cut: Spawn) => {
     const next = await api.client.session.fork({
       sessionID,
@@ -505,6 +577,19 @@ const tui: TuiPlugin = async (api) => {
     });
   };
 
+  const status = async () => {
+    const sessionID = current();
+    const handoff = await readstatushandoff(sessionID);
+    if (handoff) await clearstatushandoff(sessionID);
+    const report = statusreport(sessionID, handoff);
+    toast({
+      title: report.title,
+      message: report.message,
+      variant: report.variant,
+      duration: 6000,
+    });
+  };
+
   api.slots.register({
     order: 60,
     slots: {
@@ -578,12 +663,7 @@ const tui: TuiPlugin = async (api) => {
         description: "Check whether the opencode-bytheway plugin is loaded",
         category: "Session",
         onSelect: () => {
-          toast({
-            title: "opencode-bytheway",
-            message: statustext(current()),
-            variant: "info",
-            duration: 6000,
-          });
+          void status();
         },
       },
     ];
