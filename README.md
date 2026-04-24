@@ -25,9 +25,26 @@ A plugin package opencode-btw already exists. It is not an attempt to emulate Cl
 
 ## Install
 
+Use OpenCode's plugin installer:
+
+```bash
+opencode plugin opencode-bytheway --global
+```
+
+The installer detects that this package has both server and TUI targets and updates both global config files:
+
+- `~/.config/opencode/opencode.json`
+- `~/.config/opencode/tui.json`
+
+Use `--force` if you need to replace an existing pinned version:
+
+```bash
+opencode plugin opencode-bytheway@0.3.9 --global --force
+```
+
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-List the same package spec in both config files for normal usage. If you pin or bump versions, update both files together; otherwise the server slash shims and the same-window TUI session handlers can run different plugin versions.
+If installing manually instead of using `opencode plugin`, list the same package spec in both config files. If you pin or bump versions, update both files together; otherwise the server slash shims and the same-window TUI session handlers can run different plugin versions.
 
 The two entries are both required:
 - the TUI plugin implements `/btw`, `/btw-merge`, and `/btw-end`
@@ -56,7 +73,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.8"]
+  "plugin": ["opencode-bytheway@0.3.9"]
 }
 ```
 
@@ -64,7 +81,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.8"]
+  "plugin": ["opencode-bytheway@0.3.9"]
 }
 ```
 
@@ -171,6 +188,6 @@ Suggested WebStorm workflow:
 Example:
 
 ```bash
-git tag v0.3.8
-git push origin v0.3.8
+git tag v0.3.9
+git push origin v0.3.9
 ```

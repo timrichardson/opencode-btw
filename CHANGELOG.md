@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.9
+
+- document `opencode plugin opencode-bytheway --global` as the primary install path because it updates both server and TUI config files
+- keep manual dual-file config instructions as a fallback for users not using the plugin installer
+
 ## 0.3.8
 
 - report both server and TUI plugin versions from `/btw-status` so mismatched OpenCode config entries are easier to diagnose
