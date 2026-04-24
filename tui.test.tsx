@@ -52,6 +52,7 @@ function setup(input?: {
   tempMessages?: any[]
   currentSession?: any
   getSessions?: Record<string, any>
+  missingSessions?: string[]
   childSessions?: any[]
   deleteError?: Error
   deleteReject?: Error
@@ -230,6 +231,9 @@ function setup(input?: {
         },
         async get(args: Record<string, unknown>) {
           calls.push("get")
+          if (input?.missingSessions?.includes(String(args.sessionID))) {
+            return { error: new Error("Session not found") }
+          }
           if (input?.getSessions?.[String(args.sessionID)]) {
             return { data: input.getSessions[String(args.sessionID)] }
           }
@@ -317,7 +321,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(serverPlugin.id).toBe("opencode-bytheway")
   })
 
-  test("registers btw_status and injects the btw-prompt command", async () => {
+  test("registers btw_status and injects server slash commands", async () => {
     const server = await serverPlugin.server()
     const cfg = { command: { existing: { description: "keep" } } } as any
 
@@ -329,13 +333,24 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_select_temp",
     ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      "opencode-bytheway 0.3.6 is loaded.\nsession: ses_status",
+      "opencode-bytheway 0.3.7 is loaded.\nsession: ses_status",
     )
     expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
       template: "/btw-prompt",
     })
-    expect(cfg.command.btw).toBeUndefined()
+    expect(cfg.command.btw).toEqual({
+      description: "Open a by-the-way side session in this terminal",
+      template: "/btw",
+    })
+    expect(cfg.command["btw-merge"]).toEqual({
+      description: "Append by-the-way text back to the original session and close it",
+      template: "/btw-merge",
+    })
+    expect(cfg.command["btw-end"]).toEqual({
+      description: "Return to the original session and close by-the-way",
+      template: "/btw-end",
+    })
     expect(cfg.command["btw-status"]).toEqual({
       description: "Check whether the opencode-bytheway plugin is loaded",
       template: "/btw-status",
@@ -346,12 +361,17 @@ describe("opencode-bytheway tui plugin", () => {
   test("btw-status command executes directly in command.execute.before and shows a toast", async () => {
     const client: any = {
       tui: {
-        async showToast(args: Record<string, unknown>) {
+        async publish(args: Record<string, any>) {
           expect(args).toEqual({
-            title: "opencode-bytheway",
-            message: "opencode-bytheway 0.3.6 is loaded.\nsession: ses_status",
-            variant: "info",
-            duration: 6000,
+            body: {
+              type: "tui.toast.show",
+              properties: {
+                title: "opencode-bytheway",
+                message: "opencode-bytheway 0.3.7 is loaded.\nsession: ses_status",
+                variant: "info",
+                duration: 6000,
+              },
+            },
           })
           return { data: true }
         },
@@ -363,6 +383,61 @@ describe("opencode-bytheway tui plugin", () => {
     await expect(hook?.({ command: "btw-status", sessionID: "ses_status", arguments: "" }, { parts: [] })).rejects.toThrow(
       "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__",
     )
+  })
+
+  test("server slash commands dispatch the existing TUI command handlers", async () => {
+    const published: string[] = []
+    const client: any = {
+      tui: {
+        async publish(args: Record<string, any>) {
+          published.push(args.body.properties.command)
+          return { data: true }
+        },
+      },
+    }
+
+    const server = await serverPlugin.server({ client })
+    const hook = server["command.execute.before"]
+
+    await expect(hook?.({ command: "btw", sessionID: "ses_main", arguments: "" }, { parts: [] })).rejects.toThrow(
+      "__OPENCODE_BYTHEWAY_BTW_HANDLED__",
+    )
+    await expect(hook?.({ command: "btw-merge", sessionID: "ses_btw", arguments: "" }, { parts: [] })).rejects.toThrow(
+      "__OPENCODE_BYTHEWAY_BTW_MERGE_HANDLED__",
+    )
+    await expect(hook?.({ command: "btw-end", sessionID: "ses_btw", arguments: "" }, { parts: [] })).rejects.toThrow(
+      "__OPENCODE_BYTHEWAY_BTW_END_HANDLED__",
+    )
+    expect(published).toEqual(["btw.open", "btw.merge", "btw.end"])
+  })
+
+  test("/btw with arguments hands the prompt to the TUI open flow", async () => {
+    rmSync(handoffFile("ses_btw_query"), { force: true })
+    const published: string[] = []
+    const client: any = {
+      tui: {
+        async publish(args: Record<string, any>) {
+          published.push(args.body.properties.command)
+          return { data: true }
+        },
+      },
+    }
+
+    const server = await serverPlugin.server({ client })
+    const hook = server["command.execute.before"]
+
+    await expect(hook?.({ command: "btw", sessionID: "ses_btw_query", arguments: "tell me about the anzac legend" }, { parts: [] })).rejects.toThrow(
+      "__OPENCODE_BYTHEWAY_BTW_HANDLED__",
+    )
+    expect(published).toEqual(["btw.open"])
+    expect(JSON.parse(readFileSync(handoffFile("ses_btw_query"), "utf8"))).toMatchObject({
+      type: "experimental-btw",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_btw_query",
+      prompt: "tell me about the anzac legend",
+    })
+    rmSync(handoffFile("ses_btw_query"), { force: true })
   })
 
   test("opencode_bytheway_plugin_open tool writes the prompt handoff and triggers btw.open in the TUI", async () => {
@@ -478,14 +553,15 @@ describe("opencode-bytheway tui plugin", () => {
     await expect(server.tool.opencode_bytheway_plugin_select_temp.execute({ sessionID: "ses_btw" }, {} as any)).resolves.toBe("")
   })
 
-  test("registers /btw, /btw-merge, and /btw-end slash commands", async () => {
+  test("registers TUI command handlers without slash autocomplete metadata", async () => {
     const { api, rows } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    expect(rows()).toHaveLength(3)
-    expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "btw" })
-    expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "btw-merge" })
-    expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "btw-end" })
+    expect(rows()).toHaveLength(4)
+    expect(cmd(rows(), "btw.open")?.slash).toBeUndefined()
+    expect(cmd(rows(), "btw.merge")?.slash).toBeUndefined()
+    expect(cmd(rows(), "btw.end")?.slash).toBeUndefined()
+    expect(cmd(rows(), "btw.status")?.slash).toBeUndefined()
     expect(cmd(rows(), "btw.popup")).toBeUndefined()
   })
 
@@ -539,10 +615,22 @@ describe("opencode-bytheway tui plugin", () => {
         description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
         template: "/btw-prompt",
       })
-      expect(cfg.command.aside).toBeUndefined()
-      expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
-      expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "aside-merge" })
-      expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside-end" })
+      expect(cfg.command.aside).toEqual({
+        description: "Open a by-the-way side session in this terminal",
+        template: "/aside",
+      })
+      expect(cfg.command["aside-merge"]).toEqual({
+        description: "Append by-the-way text back to the original session and close it",
+        template: "/aside-merge",
+      })
+      expect(cfg.command["aside-end"]).toEqual({
+        description: "Return to the original session and close by-the-way",
+        template: "/aside-end",
+      })
+      expect(cmd(rows(), "btw.open")?.slash).toBeUndefined()
+      expect(cmd(rows(), "btw.merge")?.slash).toBeUndefined()
+      expect(cmd(rows(), "btw.end")?.slash).toBeUndefined()
+      expect(cmd(rows(), "btw.status")?.slash).toBeUndefined()
       expect(indicator("ses_btw", { origin: "ses_main", temp: "ses_btw" } as any)).toEqual({
         title: "/aside session active",
         detail: "Run /aside-end to return",
@@ -559,6 +647,24 @@ describe("opencode-bytheway tui plugin", () => {
       if (prev === undefined) delete env()["OPENCODE_BYTHEWAY_COMMAND"]
       else env()["OPENCODE_BYTHEWAY_COMMAND"] = prev
     }
+  })
+
+  test("registers btw.status in the TUI command palette", async () => {
+    const { api, rows, toasts } = setup({ sessionID: "ses_status" })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    expect(cmd(rows(), "btw.status")?.slash).toBeUndefined()
+
+    cmd(rows(), "btw.status").onSelect()
+
+    expect(toasts).toEqual([
+      {
+        title: "opencode-bytheway",
+        message: "opencode-bytheway 0.3.7 is loaded.\nsession: ses_status",
+        variant: "info",
+        duration: 6000,
+      },
+    ])
   })
 
   test("shows /btw from home and hides /btw-end", async () => {
@@ -590,6 +696,35 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cmd(rows(), "btw.open")?.hidden).toBe(false)
     expect(cmd(rows(), "btw.merge")?.hidden).toBe(true)
     expect(cmd(rows(), "btw.end")?.hidden).toBe(true)
+  })
+
+  test("resumes an existing active btw temp session from the origin", async () => {
+    const { api, calls, kv, nav, rows } = setup({ sessionID: "ses_main" })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+
+    expect(calls).toEqual(["get"])
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+  })
+
+  test("clears stale active btw state and opens a new temp session", async () => {
+    const { api, calls, kv, nav, rows } = setup({ sessionID: "ses_main", missingSessions: ["ses_btw"] })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+
+    cmd(rows(), "btw.open").onSelect()
+    await tick()
+    await tick()
+
+    expect(calls).toEqual(["get", "messages", "fork", "update"])
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
   })
 
   test("creates an origin session when opening /btw from home", async () => {
@@ -706,6 +841,36 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cmd(rows(), "btw.merge")?.suggested).toBe(true)
     expect(cmd(rows(), "btw.end")?.hidden).toBe(false)
     expect(cmd(rows(), "btw.end")?.suggested).toBeUndefined()
+  })
+
+  test("warns when ending without an active btw session", async () => {
+    const { api, calls, nav, rows, toasts } = setup()
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    cmd(rows(), "btw.end").onSelect()
+    await tick()
+
+    expect(calls).toEqual(["get", "children"])
+    expect(nav).toEqual([])
+    expect(toasts.at(-1)).toEqual({ variant: "warning", message: "No active /btw session." })
+  })
+
+  test("warns when ending from outside the active btw temp session", async () => {
+    const { api, calls, kv, nav, rows, toasts } = setup({ sessionID: "ses_main" })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+
+    cmd(rows(), "btw.end").onSelect()
+    await tick()
+
+    expect(calls).toEqual([])
+    expect(nav).toEqual([])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+    expect(toasts.at(-1)).toEqual({
+      variant: "warning",
+      message: "Run /btw-end from inside the active /btw session.",
+    })
   })
 
   test("merges btw text back into the origin session and deletes temp", async () => {

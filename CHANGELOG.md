@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7
+
+- restore typed `/btw`, `/btw-merge`, and `/btw-end` dispatch for current OpenCode by routing server slash shims into the TUI command handlers
+- avoid duplicate slash autocomplete entries by keeping slash metadata on the server shims only
+- make `/btw-status` use the current TUI toast event path
+- resume or clear stale `/btw` state instead of refusing to open a side session after restart
+- support `/btw <prompt>` by handing the inline prompt to the new temporary session
+
 ## 0.3.6
 
 - keep `/btw` and `/btw-prompt` visible on the origin session even while a temporary `/btw` session is active

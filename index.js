@@ -21,6 +21,15 @@ const handoffnamespace = () => {
 }
 
 const openname = () => slashbase()
+const endname = () => `${slashbase()}-end`
+const mergename = () => `${slashbase()}-merge`
+
+const commandhandled = (name) => `__OPENCODE_BYTHEWAY_${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_HANDLED__`
+
+const slashcmd = (name, description) => ({
+  description,
+  template: `/${name}`,
+})
 
 const statuscmd = {
   description: "Check whether the opencode-bytheway plugin is loaded",
@@ -75,30 +84,57 @@ const writehandoff = async (originSessionID, prompt) => {
   })
 }
 
-const triggerbtwopen = async (client) => {
-  await logserver("experimental.enter:trigger_btw_open:start", { mode: "publish" })
+const triggertuicommand = async (client, command, logstage = "tui.command") => {
+  await logserver(`${logstage}:start`, { command, mode: "publish" })
 
   if (typeof client.tui?.publish === "function") {
     const published = await client.tui.publish({
       body: {
         type: "tui.command.execute",
-        properties: { command: "btw.open" },
+        properties: { command },
       },
     })
     if (published?.error) throw published.error
-    await logserver("experimental.enter:trigger_btw_open:done", { mode: "publish" })
+    await logserver(`${logstage}:done`, { command, mode: "publish" })
     return
   }
 
   if (typeof client.tui?.executeCommand === "function") {
-    const executed = await client.tui.executeCommand({ command: "btw.open" })
+    const executed = await client.tui.executeCommand({ command })
     if (executed?.error) throw executed.error
-    await logserver("experimental.enter:trigger_btw_open:done", { mode: "executeCommand" })
+    await logserver(`${logstage}:done`, { command, mode: "executeCommand" })
     return
   }
 
   throw new Error("OpenCode TUI command execution is unavailable.")
 }
+
+const showtuitoast = async (client, input, logstage = "tui.toast") => {
+  await logserver(`${logstage}:start`, { title: input.title ?? null, mode: "publish" })
+
+  if (typeof client.tui?.publish === "function") {
+    const published = await client.tui.publish({
+      body: {
+        type: "tui.toast.show",
+        properties: input,
+      },
+    })
+    if (published?.error) throw published.error
+    await logserver(`${logstage}:done`, { title: input.title ?? null, mode: "publish" })
+    return
+  }
+
+  if (typeof client.tui?.showToast === "function") {
+    const shown = await client.tui.showToast(input)
+    if (shown?.error) throw shown.error
+    await logserver(`${logstage}:done`, { title: input.title ?? null, mode: "showToast" })
+    return
+  }
+
+  throw new Error("OpenCode TUI toast notifications are unavailable.")
+}
+
+const triggerbtwopen = (client) => triggertuicommand(client, "btw.open", "experimental.enter:trigger_btw_open")
 
 const enter = async (client, sessionID, prompt) => {
   await logserver("experimental.enter:start", {
@@ -162,6 +198,9 @@ export default {
     },
     async config(cfg) {
       cfg.command = {
+        [openname()]: slashcmd(openname(), "Open a by-the-way side session in this terminal"),
+        [mergename()]: slashcmd(mergename(), "Append by-the-way text back to the original session and close it"),
+        [endname()]: slashcmd(endname(), "Return to the original session and close by-the-way"),
         "btw-prompt": experimentalcmd,
         "btw-status": statuscmd,
         ...cfg.command,
@@ -171,13 +210,39 @@ export default {
       if (input.command === "btw-status") {
         if (!client) throw new Error("OpenCode client unavailable.")
         const message = statustext(input.sessionID)
-        await client.tui.showToast({
+        await logserver("command.execute.before", {
+          command: input.command,
+          originSessionID: input.sessionID ?? null,
+        })
+        await showtuitoast(client, {
           title: "opencode-bytheway",
           message,
           variant: "info",
           duration: 6000,
-        }).catch(() => undefined)
+        }, "command.execute.before:show_status")
         throw new Error(BTW_STATUS_HANDLED)
+      }
+      const tuiCommands = new Map([
+        [openname(), "btw.open"],
+        [mergename(), "btw.merge"],
+        [endname(), "btw.end"],
+      ])
+      const tuiCommand = tuiCommands.get(input.command)
+      if (tuiCommand) {
+        if (!client) throw new Error("OpenCode client unavailable.")
+        const prompt = typeof input.arguments === "string" ? input.arguments.trim() : ""
+        await logserver("command.execute.before", {
+          command: input.command,
+          tuiCommand,
+          originSessionID: input.sessionID ?? null,
+          promptLength: prompt.length,
+        })
+        if (input.command === openname() && prompt) {
+          await enter(client, input.sessionID, prompt)
+          throw new Error(commandhandled(input.command))
+        }
+        await triggertuicommand(client, tuiCommand, "command.execute.before:trigger_tui_command")
+        throw new Error(commandhandled(input.command))
       }
       if (input.command !== "btw-prompt") return
       if (!client) throw new Error("OpenCode client unavailable.")

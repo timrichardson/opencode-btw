@@ -1,6 +1,7 @@
 import { TextAttributes } from "@opentui/core";
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { appendFile, readFile, unlink } from "node:fs/promises";
+import packageJson from "./package.json" with { type: "json" };
 
 declare namespace JSX {
   interface IntrinsicElements {
@@ -80,6 +81,11 @@ export const indicator = (sessionID: string | undefined, state?: Btw) => {
 };
 
 export const sessiontitle = () => `${slash(openname())} session`;
+
+const statustext = (sessionID: string | undefined) => [
+  `opencode-bytheway ${packageJson.version} is loaded.`,
+  `session: ${sessionID ?? "<none>"}`,
+].join("\n");
 
 const handoffnamespace = () => {
   const env = (globalThis as typeof globalThis & {
@@ -180,6 +186,11 @@ const tui: TuiPlugin = async (api) => {
     const list = await api.client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined);
     if (!list?.data?.length) return [];
     return list.data as SessionMessage[];
+  };
+
+  const sessionexists = async (sessionID: string) => {
+    const next = await api.client.session.get({ sessionID }).catch(() => undefined);
+    return Boolean(next?.data?.id);
   };
 
   const collecttext = (parts: SessionMessage["parts"]) =>
@@ -329,11 +340,11 @@ const tui: TuiPlugin = async (api) => {
       return;
     }
     if (state) {
-      toast({
-        variant: "warning",
-        message: `A ${slash(openname())} session is already active. Run ${slash(endname())} first.`,
-      });
-      return;
+      if (await sessionexists(state.temp)) {
+        api.route.navigate("session", { sessionID: state.temp });
+        return;
+      }
+      save(undefined);
     }
 
     try {
@@ -465,6 +476,13 @@ const tui: TuiPlugin = async (api) => {
       });
       return;
     }
+    if (state.temp !== current()) {
+      toast({
+        variant: "warning",
+        message: `Run ${slash(endname())} from inside the active ${slash(openname())} session.`,
+      });
+      return;
+    }
 
     api.route.navigate("session", { sessionID: state.origin });
     let result;
@@ -528,9 +546,6 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.open",
         description: `Open a ${slash(openname())} side session in this terminal`,
         category: "Session",
-        slash: {
-          name: openname(),
-        },
         hidden: active,
         onSelect: () => {
           void enter();
@@ -541,9 +556,6 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.merge",
         description: `Append ${slash(openname())} text back to the original session and close it`,
         category: "Session",
-        slash: {
-          name: mergename(),
-        },
         hidden: !inbtw,
         suggested: inbtw,
         onSelect: () => {
@@ -555,12 +567,23 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.end",
         description: `Return to the original session and close ${slash(openname())}`,
         category: "Session",
-        slash: {
-          name: endname(),
-        },
-        hidden: !active,
+        hidden: !inbtw,
         onSelect: () => {
           void end();
+        },
+      },
+      {
+        title: "By the way status",
+        value: "btw.status",
+        description: "Check whether the opencode-bytheway plugin is loaded",
+        category: "Session",
+        onSelect: () => {
+          toast({
+            title: "opencode-bytheway",
+            message: statustext(current()),
+            variant: "info",
+            duration: 6000,
+          });
         },
       },
     ];

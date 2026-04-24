@@ -27,12 +27,10 @@ A plugin package opencode-btw already exists. It is not an attempt to emulate Cl
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-For `/btw`, `/btw-merge`, and `/btw-end`, list this package in `tui.json[c]`.
-List it in `opencode.json[c]` too if you want:
-- `/btw-prompt some prompt` to hand that prompt to the TUI-managed temp session
-- the `btw-status` diagnostic command
-
-For the seamless experimental handoff, load the plugin in both `opencode.json[c]` and `tui.json[c]`.
+List this package in both config files for normal usage:
+- the TUI plugin implements `/btw`, `/btw-merge`, and `/btw-end`
+- the server plugin registers slash-command shims so typed `/btw`, `/btw-merge`, and `/btw-end` submissions dispatch to those TUI handlers in current OpenCode
+- the server plugin also provides `/btw-prompt some prompt` and the `btw-status` diagnostic command
 
 Example `opencode.jsonc`:
 
@@ -54,15 +52,15 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.6"]
+  "plugin": ["opencode-bytheway@0.3.7"]
 }
 ```
 
 Restart OpenCode after installing or updating the plugin.
 
 Troubleshooting:
-- if `btw-status` or `/btw-prompt` appears but `/btw` does not, the package is loaded in `opencode.json[c]` but missing from `tui.json[c]`
-- if `/btw` works but `/btw-prompt` or `btw-status` does not, the package is loaded in `tui.json[c]` but missing from `opencode.json[c]`
+- if `btw-status` or `/btw-prompt` appears but `/btw` does not open a side session, the package is loaded in `opencode.json[c]` but missing from `tui.json[c]`
+- if `/btw` appears only through autocomplete/direct selection but typed `/btw` submission does not work, the package is loaded in `tui.json[c]` but missing from `opencode.json[c]`
 - reload or restart OpenCode after changing either config
 
 Optional command-family override:
@@ -98,15 +96,13 @@ bun run test:server-debug
 npm pack --dry-run
 ```
 
-For local OpenCode testing, point `tui.json[c]` at this repository path after running `bun run build`.
-Also point `opencode.json[c]` at it if you want `/btw-prompt` support or the `btw-status` diagnostic command.
+For local OpenCode testing, point both `tui.json[c]` and `opencode.json[c]` at this repository path after running `bun run build`.
 
 After changing `tui.tsx`, run `bun run build` again before reopening or reloading OpenCode so the local plugin uses the updated `dist/tui.js`.
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-When testing locally, put the package root in `tui.json[c]` for `/btw`, `/btw-merge`, and `/btw-end`.
-Add the same package root to `opencode.json[c]` if you also want `/btw-prompt` support or the `btw-status` diagnostic command.
+When testing locally, put the package root in `tui.json[c]` for the TUI workflow and in `opencode.json[c]` for typed slash-command dispatch, `/btw-prompt`, and `btw-status`.
 
 Example `opencode.json` entry when the repository lives at `~/projects/opencode-btw-plugin`:
 
@@ -162,6 +158,6 @@ Suggested WebStorm workflow:
 Example:
 
 ```bash
-git tag v0.3.6
-git push origin v0.3.6
+git tag v0.3.7
+git push origin v0.3.7
 ```
