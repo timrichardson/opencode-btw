@@ -180,17 +180,34 @@ Suggested WebStorm workflow:
 
 ## Release
 
-- CI runs from repo root
-- release publishes from repo root
-- tag format is `v*`
-- verify both plugin halves load after install:
-  - server: `btw-status`
-  - TUI: `/btw`, `/btw-merge`, `/btw-end`
-  - optional experimental server command: `/btw-prompt`
+- CI and release publish from repo root.
+- The release workflow does not bump `package.json`; bump the version and commit it before tagging.
+- Stable release tags only. Tag format is `v*`, and the tag version must match `package.json` exactly.
+- The workflow runs `bun run test`, `bun run build`, publishes to npm, and creates the GitHub release.
 
-Example:
+Before tagging:
 
 ```bash
-git tag v0.3.10
-git push origin v0.3.10
+bun run build
+bun run test
+bun run test:integration
+npm pack --dry-run
 ```
+
+Release checklist:
+
+```bash
+# update package.json version, for example 0.3.11
+# update CHANGELOG.md if needed
+git add package.json CHANGELOG.md
+git commit -m "chore: release 0.3.11"
+git tag v0.3.11
+git push origin main
+git push origin v0.3.11
+```
+
+After install, verify both plugin halves load:
+
+- server: `btw-status`
+- TUI: `/btw`, `/btw-merge`, `/btw-end`
+- optional experimental server command: `/btw-prompt`

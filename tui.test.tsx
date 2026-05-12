@@ -362,7 +362,7 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_select_temp",
     ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      "opencode-bytheway 0.3.10 is loaded.\nsession: ses_status",
+      "opencode-bytheway 0.3.11 is loaded.\nsession: ses_status",
     )
     expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
@@ -412,7 +412,7 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status",
-      serverVersion: "0.3.10",
+      serverVersion: "0.3.11",
     })
     rmSync(statusFile("ses_status"), { force: true })
   })
@@ -694,7 +694,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(toasts).toEqual([
       {
         title: "opencode-bytheway",
-        message: "opencode-bytheway 0.3.10 is loaded.\nsession: ses_status",
+        message: "opencode-bytheway 0.3.11 is loaded.\nsession: ses_status",
         variant: "info",
         duration: 6000,
       },
@@ -709,7 +709,7 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status_match",
-      serverVersion: "0.3.10",
+      serverVersion: "0.3.11",
     })}\n`)
 
     await select(rows(), "btw.status")
@@ -721,8 +721,8 @@ describe("opencode-bytheway tui plugin", () => {
         title: "opencode-bytheway",
         message: [
           "opencode-bytheway is loaded.",
-          "server: 0.3.10",
-          "tui: 0.3.10",
+          "server: 0.3.11",
+          "tui: 0.3.11",
           "session: ses_status_match",
         ].join("\n"),
         variant: "info",
@@ -753,7 +753,7 @@ describe("opencode-bytheway tui plugin", () => {
         message: [
           "opencode-bytheway server and TUI plugin versions differ.",
           "server: 0.3.6",
-          "tui: 0.3.10",
+          "tui: 0.3.11",
           "Update both opencode.jsonc and tui.jsonc to the same package version.",
           "session: ses_status_mismatch",
         ].join("\n"),

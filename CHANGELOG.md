@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.11
+
+- update the TUI command and session flow to work with OpenCode 1.14.48
+- add an opt-in integration test that launches a real OpenCode TUI session for `/btw` coverage
+
 ## 0.3.10
 
 - align CI and release workflows with Bun 1.3.13 to match local verification
