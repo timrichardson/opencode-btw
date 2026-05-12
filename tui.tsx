@@ -131,6 +131,18 @@ const statusreport = (sessionID: string | undefined, handoff?: StatusHandoff) =>
   };
 };
 
+const errorinfo = (err: unknown) => {
+  if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack };
+  if (err && typeof err === "object") {
+    try {
+      return { message: String(err), value: JSON.stringify(err) };
+    } catch {
+      return { message: String(err) };
+    }
+  }
+  return { message: String(err) };
+};
+
 const handoffnamespace = () => {
   const env = (globalThis as typeof globalThis & {
     process?: { env?: Record<string, string | undefined> };
@@ -240,9 +252,9 @@ const tui: TuiPlugin = async (api) => {
     return list.data as SessionMessage[];
   };
 
-  const sessionexists = async (sessionID: string) => {
+  const sessioninfo = async (sessionID: string) => {
     const next = await api.client.session.get({ sessionID }).catch(() => undefined);
-    return Boolean(next?.data?.id);
+    return next?.data;
   };
 
   const collecttext = (parts: SessionMessage["parts"]) =>
@@ -260,17 +272,9 @@ const tui: TuiPlugin = async (api) => {
     if (!sessionID) return;
 
     resolving = (async () => {
-      const currentSession = await api.client.session.get({ sessionID }).catch(() => undefined);
-      const info = currentSession?.data;
-      if (info?.title === sessiontitle() && info.parentID) {
-        const value = { origin: info.parentID, temp: sessionID };
-        save(value);
-        return value;
-      }
-
       const children = await api.client.session.children({ sessionID }).catch(() => undefined);
       const temp = children?.data
-        ?.filter((item) => item.title === sessiontitle())
+        ?.filter((item) => item.title === sessiontitle() && !item.parentID)
         .sort((a, b) => b.time.updated - a.time.updated)[0];
       if (!temp?.id) return;
 
@@ -288,12 +292,26 @@ const tui: TuiPlugin = async (api) => {
 
   const origin = async () => {
     const sessionID = current();
-    if (sessionID) return sessionID;
+    if (sessionID) return { sessionID, created: false };
 
-    const next = await api.client.session.create({});
+    logevent("enter:origin:list:start", {});
+    const list = await api.client.session
+      .list({ roots: true, order: "desc", limit: 1 })
+      .catch((err) => ({ error: err }));
+    if (list.error) logevent("enter:origin:list:error", { error: errorinfo(list.error) });
+    const latest = list.data?.items?.[0]?.id;
+    if (typeof latest === "string") {
+      logevent("enter:origin:list:success", { sessionID: latest });
+      return { sessionID: latest, created: false };
+    }
+
+    logevent("enter:origin:create:start", {});
+    const next = await api.client.session.create().catch((err) => ({ error: err }));
+    if (next.error) logevent("enter:origin:create:error", { error: errorinfo(next.error) });
     if (next.error || !next.data?.id)
       throw next.error ?? new Error("Failed to create a new session.");
-    return next.data.id;
+    logevent("enter:origin:create:success", { sessionID: next.data.id });
+    return { sessionID: next.data.id, created: true };
   };
 
   const cutoff = async (sessionID: string): Promise<Spawn> => {
@@ -385,10 +403,26 @@ const tui: TuiPlugin = async (api) => {
   };
 
   const fork = async (sessionID: string, cut: Spawn) => {
-    const next = await api.client.session.fork({
+    const input = {
       sessionID,
-      ...(cut.mode === "cut" ? { messageID: cut.messageID } : {}),
-    });
+      messageID: cut.mode === "cut" ? cut.messageID : undefined,
+    };
+    const next = await api.client.session.fork(input, { throwOnError: true }).catch((error) => ({ error }));
+    if (next.error || !next.data?.id) {
+      if (next.error) logevent("enter:fork:error", { originSessionID: sessionID, error: errorinfo(next.error) });
+
+      // Some current OpenCode builds complete the fork but return an empty body,
+      // which makes the generated SDK throw while decoding the successful response.
+      const list = await api.client.session
+        .list({ roots: true, order: "desc", limit: 5 })
+        .catch((error) => ({ error }));
+      if (list.error) logevent("enter:fork:fallback:list:error", { error: errorinfo(list.error) });
+      const fallback = list.data?.items?.find((item) => item.id !== sessionID && !item.parentID)?.id;
+      if (typeof fallback === "string") {
+        logevent("enter:fork:fallback:list:success", { originSessionID: sessionID, sessionID: fallback });
+        return fallback;
+      }
+    }
     if (next.error || !next.data?.id)
       throw next.error ?? new Error("Failed to create temporary session.");
     return next.data.id;
@@ -412,7 +446,10 @@ const tui: TuiPlugin = async (api) => {
       return;
     }
     if (state) {
-      if (await sessionexists(state.temp)) {
+      const temp = await sessioninfo(state.temp);
+      if (temp?.parentID) {
+        save(undefined);
+      } else if (temp?.id) {
         api.route.navigate("session", { sessionID: state.temp });
         return;
       }
@@ -420,20 +457,25 @@ const tui: TuiPlugin = async (api) => {
     }
 
     try {
+      logevent("enter:start", { sessionID, hasState: Boolean(state) });
       const source = await origin();
-      const handoff = await readhandoff(source);
-      const experimental = handoff && handoff.originSessionID === source ? handoff : undefined;
+      const sourceID = source.sessionID;
+      logevent("enter:origin", { sessionID: sourceID, created: source.created });
+      const handoff = await readhandoff(sourceID);
+      const experimental = handoff && handoff.originSessionID === sourceID ? handoff : undefined;
       if (experimental) {
-        await clearhandoff(source);
+        await clearhandoff(sourceID);
         logevent("experimental:claimed_handoff", {
-          originSessionID: source,
+          originSessionID: sourceID,
           promptLength: experimental.prompt.length,
         });
       }
-      const cut = await cutoff(source);
-      const temp = await fork(source, cut);
+      const cut = await cutoff(sourceID);
+      logevent("enter:cutoff", { sessionID: sourceID, mode: cut.mode, count: cut.count, boundary: cut.boundary });
+      const temp = await fork(sourceID, cut);
+      logevent("enter:fork", { originSessionID: sourceID, tempSessionID: temp });
       await label(temp);
-      save({ origin: source, temp, baseCount: cut.count });
+      save({ origin: sourceID, temp, baseCount: cut.count });
       api.route.navigate("session", { sessionID: temp });
       if (experimental) {
         if (experimental.prompt.trim()) {
@@ -445,9 +487,9 @@ const tui: TuiPlugin = async (api) => {
 
           const after = await messages(temp);
           const baseCount = Math.max(after.length, cut.count + 2);
-          save({ origin: source, temp, baseCount });
+          save({ origin: sourceID, temp, baseCount });
           logevent("experimental:prompted", {
-            originSessionID: source,
+            originSessionID: sourceID,
             tempSessionID: temp,
             baseCount,
             promptLength: experimental.prompt.length,
@@ -468,6 +510,7 @@ const tui: TuiPlugin = async (api) => {
         }),
       );
     } catch (err) {
+      logevent("enter:error", { error: errorinfo(err) });
       toast({
         variant: "error",
         message: msg(err),
@@ -631,6 +674,7 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.open",
         description: `Open a ${slash(openname())} side session in this terminal`,
         category: "Session",
+        slash: { name: openname() },
         hidden: active,
         onSelect: () => {
           return enter();
@@ -641,6 +685,7 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.merge",
         description: `Append ${slash(openname())} text back to the original session and close it`,
         category: "Session",
+        slash: { name: mergename() },
         hidden: !inbtw,
         suggested: inbtw,
         onSelect: () => {
@@ -652,6 +697,7 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.end",
         description: `Return to the original session and close ${slash(openname())}`,
         category: "Session",
+        slash: { name: endname() },
         hidden: !inbtw,
         onSelect: () => {
           return end();
@@ -662,6 +708,7 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.status",
         description: "Check whether the opencode-bytheway plugin is loaded",
         category: "Session",
+        slash: { name: `${slashbase()}-status` },
         onSelect: () => {
           return status();
         },

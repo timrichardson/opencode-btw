@@ -123,12 +123,15 @@ bun install --ignore-scripts
 bun run build
 bun run test
 bun run test:server-debug
+bun run test:integration
 npm pack --dry-run
 ```
 
 For local OpenCode testing, point both `tui.json[c]` and `opencode.json[c]` at this repository path after running `bun run build`.
 
 After changing `tui.tsx`, run `bun run build` again before reopening or reloading OpenCode so the local plugin uses the updated `dist/tui.js`.
+
+`bun run test:integration` launches the real installed `opencode` TUI inside a pseudo-terminal and drives `/btw` from an isolated temporary config. Use it when developing TUI/session behavior; it is intentionally separate from `bun run test` because it depends on the local OpenCode binary and runtime environment.
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
