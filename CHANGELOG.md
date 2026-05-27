@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.13
+
+- share bytheway protocol helpers between the server and TUI plugin halves
+
 ## 0.3.12
 
 - clear stale active `/btw` state from another origin session before opening a new side session

@@ -39,7 +39,7 @@ The installer detects that this package has both server and TUI targets and upda
 Use `--force` if you need to replace an existing pinned version:
 
 ```bash
-opencode plugin opencode-bytheway@0.3.12 --global --force
+opencode plugin opencode-bytheway@0.3.13 --global --force
 ```
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
@@ -73,7 +73,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.12"]
+  "plugin": ["opencode-bytheway@0.3.13"]
 }
 ```
 
@@ -81,7 +81,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.12"]
+  "plugin": ["opencode-bytheway@0.3.13"]
 }
 ```
 
@@ -208,13 +208,13 @@ npm pack --dry-run
 Release checklist:
 
 ```bash
-# update package.json version, for example 0.3.12
+# update package.json version, for example 0.3.13
 # update CHANGELOG.md if needed
 git add package.json CHANGELOG.md
-git commit -m "chore: release 0.3.12"
-git tag v0.3.12
+git commit -m "chore: release 0.3.13"
+git tag v0.3.13
 git push origin main
-git push origin v0.3.12
+git push origin v0.3.13
 ```
 
 After install, verify both plugin halves load:
