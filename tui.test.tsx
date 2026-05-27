@@ -362,7 +362,7 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_select_temp",
     ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      "opencode-bytheway 0.3.11 is loaded.\nsession: ses_status",
+      "opencode-bytheway 0.3.12 is loaded.\nsession: ses_status",
     )
     expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
@@ -412,7 +412,7 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status",
-      serverVersion: "0.3.11",
+      serverVersion: "0.3.12",
     })
     rmSync(statusFile("ses_status"), { force: true })
   })
@@ -694,7 +694,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(toasts).toEqual([
       {
         title: "opencode-bytheway",
-        message: "opencode-bytheway 0.3.11 is loaded.\nsession: ses_status",
+        message: "opencode-bytheway 0.3.12 is loaded.\nsession: ses_status",
         variant: "info",
         duration: 6000,
       },
@@ -709,7 +709,7 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status_match",
-      serverVersion: "0.3.11",
+      serverVersion: "0.3.12",
     })}\n`)
 
     await select(rows(), "btw.status")
@@ -721,8 +721,8 @@ describe("opencode-bytheway tui plugin", () => {
         title: "opencode-bytheway",
         message: [
           "opencode-bytheway is loaded.",
-          "server: 0.3.11",
-          "tui: 0.3.11",
+          "server: 0.3.12",
+          "tui: 0.3.12",
           "session: ses_status_match",
         ].join("\n"),
         variant: "info",
@@ -753,7 +753,7 @@ describe("opencode-bytheway tui plugin", () => {
         message: [
           "opencode-bytheway server and TUI plugin versions differ.",
           "server: 0.3.6",
-          "tui: 0.3.11",
+          "tui: 0.3.12",
           "Update both opencode.jsonc and tui.jsonc to the same package version.",
           "session: ses_status_mismatch",
         ].join("\n"),
@@ -807,6 +807,22 @@ describe("opencode-bytheway tui plugin", () => {
     expect(calls).toEqual(["get"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
     expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+  })
+
+  test("clears active btw state from a different origin before opening", async () => {
+    const { api, calls, fork, kv, nav, rows } = setup({ sessionID: "ses_other" })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+
+    expect(calls).toEqual(["messages", "fork", "update"])
+    expect(fork()).toEqual({ sessionID: "ses_other", messageID: undefined })
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_other", temp: "ses_btw", baseCount: 0 })
   })
 
   test("clears stale active btw state and opens a new temp session", async () => {
@@ -1148,6 +1164,50 @@ describe("opencode-bytheway tui plugin", () => {
     expect(views).toEqual([])
     expect(() => readFileSync(handoffFile("ses_exp_origin_a"), "utf8")).toThrow()
     rmSync(handoffFile("ses_exp_origin_a"), { force: true })
+  })
+
+  test("uses the experimental handoff after clearing active state from another origin", async () => {
+    rmSync(handoffFile("ses_exp_origin_stale"), { force: true })
+    const tempMessages: any[] = []
+
+    const { api, kv, nav, prompted, rows } = setup({
+      sessionID: "ses_exp_origin_stale",
+      tempMessages,
+      onPrompt(args) {
+        expect(args).toEqual({
+          sessionID: "ses_btw",
+          parts: [{ type: "text", text: "this is a topic" }],
+        })
+        tempMessages.push(textMessage("msg_prompt", "user", "this is a topic"))
+      },
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_old", temp: "ses_old_btw", baseCount: 2 })
+    writeFileSync(handoffFile("ses_exp_origin_stale"), `${JSON.stringify({
+      type: "experimental-btw",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_exp_origin_stale",
+      prompt: "this is a topic",
+    })}\n`)
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+
+    expect(kv.get("opencode-bytheway.active")).toEqual({
+      origin: "ses_exp_origin_stale",
+      temp: "ses_btw",
+      baseCount: 2,
+    })
+    expect(prompted()).toEqual({
+      sessionID: "ses_btw",
+      parts: [{ type: "text", text: "this is a topic" }],
+    })
+    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
+    expect(() => readFileSync(handoffFile("ses_exp_origin_stale"), "utf8")).toThrow()
+    rmSync(handoffFile("ses_exp_origin_stale"), { force: true })
   })
 
   test("ignores the experimental handoff when it belongs to a different origin session", async () => {

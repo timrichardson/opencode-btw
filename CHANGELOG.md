@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.12
+
+- clear stale active `/btw` state from another origin session before opening a new side session
+- add opt-in diagnostics and integration coverage for typed `/btw <prompt>` handoff flow
+
 ## 0.3.11
 
 - update the TUI command and session flow to work with OpenCode 1.14.48

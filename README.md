@@ -197,13 +197,13 @@ npm pack --dry-run
 Release checklist:
 
 ```bash
-# update package.json version, for example 0.3.11
+# update package.json version, for example 0.3.12
 # update CHANGELOG.md if needed
 git add package.json CHANGELOG.md
-git commit -m "chore: release 0.3.11"
-git tag v0.3.11
+git commit -m "chore: release 0.3.12"
+git tag v0.3.12
 git push origin main
-git push origin v0.3.11
+git push origin v0.3.12
 ```
 
 After install, verify both plugin halves load:

@@ -215,6 +215,10 @@ const tui: TuiPlugin = async (api) => {
     });
     void appendFile(eventLogFile, `${line}\n`, "utf8").catch(() => undefined);
   };
+  const logdiagnostic = (stage: string, data: Record<string, unknown> = {}) => {
+    if (process.env.OPENCODE_BYTHEWAY_DIAGNOSTICS !== "1") return;
+    logevent(`diagnostic:${stage}`, data);
+  };
 
   logevent("tui:init", { pluginID: id });
 
@@ -438,26 +442,58 @@ const tui: TuiPlugin = async (api) => {
   const enter = async () => {
     const sessionID = current();
     const state = await getstate();
-    if (state && state.temp === sessionID) {
+    const staleState = state && sessionID && state.origin !== sessionID && state.temp !== sessionID ? state : undefined;
+    if (staleState) {
+      logdiagnostic("enter.mismatched_state", {
+        sessionID,
+        stateOrigin: staleState.origin,
+        stateTemp: staleState.temp,
+      });
+      save(undefined);
+    }
+    const activeState = staleState ? undefined : state;
+    logdiagnostic("enter.preflight", {
+      sessionID: sessionID ?? null,
+      hasState: Boolean(activeState),
+      stateOrigin: activeState?.origin ?? null,
+      stateTemp: activeState?.temp ?? null,
+      kvReady: api.kv.ready,
+    });
+    if (activeState && activeState.temp === sessionID) {
+      logdiagnostic("enter.already_inside", {
+        sessionID: sessionID ?? null,
+        stateOrigin: activeState.origin,
+        stateTemp: activeState.temp,
+      });
       toast({
         variant: "warning",
         message: `Already inside a ${slash(openname())} session. Run ${slash(endname())} to return.`,
       });
       return;
     }
-    if (state) {
-      const temp = await sessioninfo(state.temp);
+    if (activeState) {
+      const temp = await sessioninfo(activeState.temp);
+      logdiagnostic("enter.existing_temp", {
+        stateOrigin: activeState.origin,
+        stateTemp: activeState.temp,
+        found: Boolean(temp?.id),
+        parentID: temp?.parentID ?? null,
+      });
       if (temp?.parentID) {
         save(undefined);
       } else if (temp?.id) {
-        api.route.navigate("session", { sessionID: state.temp });
+        logdiagnostic("enter.reuse_temp", {
+          stateOrigin: activeState.origin,
+          stateTemp: activeState.temp,
+        });
+        api.route.navigate("session", { sessionID: activeState.temp });
         return;
       }
       save(undefined);
     }
 
     try {
-      logevent("enter:start", { sessionID, hasState: Boolean(state) });
+      logevent("enter:start", { sessionID, hasState: Boolean(activeState) });
       const source = await origin();
       const sourceID = source.sessionID;
       logevent("enter:origin", { sessionID: sourceID, created: source.created });
@@ -662,11 +698,16 @@ const tui: TuiPlugin = async (api) => {
     },
   });
 
+  logdiagnostic("command.register", {
+    commands: ["btw.open", "btw.merge", "btw.end", "btw.status"],
+    slashbase: slashbase(),
+  });
   api.command.register(() => {
     const sessionID = current();
     const tempState = currenttemp(sessionID, load());
     const active = Boolean(tempState);
     const inbtw = Boolean(indicator(sessionID, tempState));
+    logdiagnostic("command.rows", { sessionID: sessionID ?? null, active, inbtw });
 
     return [
       {
@@ -677,6 +718,7 @@ const tui: TuiPlugin = async (api) => {
         slash: { name: openname() },
         hidden: active,
         onSelect: () => {
+          logdiagnostic("command.select", { command: "btw.open", sessionID: current() ?? null });
           return enter();
         },
       },
@@ -689,6 +731,7 @@ const tui: TuiPlugin = async (api) => {
         hidden: !inbtw,
         suggested: inbtw,
         onSelect: () => {
+          logdiagnostic("command.select", { command: "btw.merge", sessionID: current() ?? null });
           return merge();
         },
       },
@@ -700,6 +743,7 @@ const tui: TuiPlugin = async (api) => {
         slash: { name: endname() },
         hidden: !inbtw,
         onSelect: () => {
+          logdiagnostic("command.select", { command: "btw.end", sessionID: current() ?? null });
           return end();
         },
       },
@@ -710,6 +754,7 @@ const tui: TuiPlugin = async (api) => {
         category: "Session",
         slash: { name: `${slashbase()}-status` },
         onSelect: () => {
+          logdiagnostic("command.select", { command: "btw.status", sessionID: current() ?? null });
           return status();
         },
       },
