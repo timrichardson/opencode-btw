@@ -30,6 +30,7 @@
   "files": [
     "dist",
     "index.js",
+    "protocol.js",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

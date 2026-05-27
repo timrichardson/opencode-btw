@@ -2,12 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DIAGNOSTICS_ENV, SERVER_LOG_FILE, TUI_EVENT_LOG_FILE, TUI_TOAST_LOG_FILE } from "./protocol.js";
 
 const RUN = process.env.OPENCODE_BTW_INTEGRATION === "1";
 const PLUGIN_ROOT = path.resolve(import.meta.dir);
-const EVENT_LOG = "/tmp/opencode-bytheway-event.log";
-const SERVER_LOG = "/tmp/opencode-bytheway-server.log";
-const TOAST_LOG = "/tmp/opencode-bytheway-toast.log";
+const EVENT_LOG = TUI_EVENT_LOG_FILE;
+const SERVER_LOG = SERVER_LOG_FILE;
+const TOAST_LOG = TUI_TOAST_LOG_FILE;
 
 const roots: string[] = [];
 
@@ -36,10 +37,10 @@ function eventsSince(offset: number) {
   });
 }
 
-async function waitFor<T>(fn: () => T | undefined | false, timeout = 10_000) {
+async function waitFor<T>(fn: () => T | Promise<T | undefined | false> | undefined | false, timeout = 10_000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
-    const value = fn();
+    const value = await fn();
     if (value) return value;
     await Bun.sleep(100);
   }
@@ -162,7 +163,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
       OPENCODE_DISABLE_MODELS_FETCH: "1",
       OPENCODE_SERVER_PASSWORD: "",
-      OPENCODE_BYTHEWAY_DIAGNOSTICS: "1",
+      [DIAGNOSTICS_ENV]: "1",
       TERM: process.env.TERM || "xterm-256color",
     },
   });

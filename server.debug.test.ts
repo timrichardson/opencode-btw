@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync, rmSync } from "node:fs"
 import serverPlugin from "./index.js"
+import { HANDOFF_NAMESPACE_ENV, handofffile } from "./protocol.js"
 
 ;(globalThis as typeof globalThis & {
   process?: { env?: Record<string, string | undefined> }
 }).process?.env && (((globalThis as typeof globalThis & {
   process?: { env?: Record<string, string | undefined> }
-}).process!.env!)["OPENCODE_BYTHEWAY_HANDOFF_NAMESPACE"] = "test")
+}).process!.env!)[HANDOFF_NAMESPACE_ENV] = "test")
 
-const handoffFile = (originSessionID = "none") => `/tmp/opencode-bytheway-handoff-test-${originSessionID.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`
+const handoffFile = (originSessionID = "none") => handofffile(originSessionID)
 
 function createClient() {
   const calls: string[] = []

@@ -2,18 +2,21 @@ import { describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import serverPlugin from "./index.js"
+import packageJson from "./package.json" with { type: "json" }
+import { COMMAND_ENV, HANDOFF_NAMESPACE_ENV, PLUGIN_ID, handofffile, statusfile } from "./protocol.js"
 import plugin, { indicator, sessiontitle } from "./tui"
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
-const handoffFile = (originSessionID = "none") => `/tmp/opencode-bytheway-handoff-test-${originSessionID.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`
-const statusFile = (sessionID = "none") => `/tmp/opencode-bytheway-status-test-${sessionID.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`
+const version = packageJson.version
+const handoffFile = (originSessionID = "none") => handofffile(originSessionID)
+const statusFile = (sessionID = "none") => statusfile(sessionID)
 
 const env = () =>
   (globalThis as typeof globalThis & {
     process?: { env?: Record<string, string | undefined> }
   }).process?.env ?? {}
 
-env()["OPENCODE_BYTHEWAY_HANDOFF_NAMESPACE"] = "test"
+env()[HANDOFF_NAMESPACE_ENV] = "test"
 
 function cmd(rows: any[], value: string) {
   return rows.find((row) => row.value === value)
@@ -347,7 +350,7 @@ function setup(input?: {
 
 describe("opencode-bytheway tui plugin", () => {
   test("exports the runtime plugin id from index.js", () => {
-    expect(serverPlugin.id).toBe("opencode-bytheway")
+    expect(serverPlugin.id).toBe(PLUGIN_ID)
   })
 
   test("registers btw_status and injects server slash commands", async () => {
@@ -362,7 +365,7 @@ describe("opencode-bytheway tui plugin", () => {
       "opencode_bytheway_plugin_select_temp",
     ])
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      "opencode-bytheway 0.3.12 is loaded.\nsession: ses_status",
+      `opencode-bytheway ${version} is loaded.\nsession: ses_status`,
     )
     expect(cfg.command["btw-prompt"]).toEqual({
       description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
@@ -412,7 +415,7 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status",
-      serverVersion: "0.3.12",
+      serverVersion: version,
     })
     rmSync(statusFile("ses_status"), { force: true })
   })
@@ -632,8 +635,8 @@ describe("opencode-bytheway tui plugin", () => {
   })
 
   test("derives slash command names from OPENCODE_BYTHEWAY_COMMAND", async () => {
-    const prev = env()["OPENCODE_BYTHEWAY_COMMAND"]
-    env()["OPENCODE_BYTHEWAY_COMMAND"] = "aside"
+    const prev = env()[COMMAND_ENV]
+    env()[COMMAND_ENV] = "aside"
 
     try {
       const server = await serverPlugin.server()
@@ -659,6 +662,10 @@ describe("opencode-bytheway tui plugin", () => {
         description: "Return to the original session and close by-the-way",
         template: "/aside-end",
       })
+      expect(cfg.command["aside-status"]).toEqual({
+        description: "Check whether the opencode-bytheway plugin is loaded",
+        template: "/aside-status",
+      })
       expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
       expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "aside-merge" })
       expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside-end" })
@@ -676,8 +683,8 @@ describe("opencode-bytheway tui plugin", () => {
       expect(views.at(-1)?.props?.title).toBe("Entered /aside Session")
       expect(views.at(-1)?.props?.message).toContain("Run /aside-end to return")
     } finally {
-      if (prev === undefined) delete env()["OPENCODE_BYTHEWAY_COMMAND"]
-      else env()["OPENCODE_BYTHEWAY_COMMAND"] = prev
+      if (prev === undefined) delete env()[COMMAND_ENV]
+      else env()[COMMAND_ENV] = prev
     }
   })
 
@@ -694,7 +701,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(toasts).toEqual([
       {
         title: "opencode-bytheway",
-        message: "opencode-bytheway 0.3.12 is loaded.\nsession: ses_status",
+        message: `opencode-bytheway ${version} is loaded.\nsession: ses_status`,
         variant: "info",
         duration: 6000,
       },
@@ -709,7 +716,7 @@ describe("opencode-bytheway tui plugin", () => {
       type: "opencode-bytheway-status",
       version: 1,
       sessionID: "ses_status_match",
-      serverVersion: "0.3.12",
+      serverVersion: version,
     })}\n`)
 
     await select(rows(), "btw.status")
@@ -721,8 +728,8 @@ describe("opencode-bytheway tui plugin", () => {
         title: "opencode-bytheway",
         message: [
           "opencode-bytheway is loaded.",
-          "server: 0.3.12",
-          "tui: 0.3.12",
+          `server: ${version}`,
+          `tui: ${version}`,
           "session: ses_status_match",
         ].join("\n"),
         variant: "info",
@@ -753,7 +760,7 @@ describe("opencode-bytheway tui plugin", () => {
         message: [
           "opencode-bytheway server and TUI plugin versions differ.",
           "server: 0.3.6",
-          "tui: 0.3.12",
+          `tui: ${version}`,
           "Update both opencode.jsonc and tui.jsonc to the same package version.",
           "session: ses_status_mismatch",
         ].join("\n"),

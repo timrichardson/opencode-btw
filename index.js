@@ -1,40 +1,32 @@
 import { appendFile, writeFile } from "node:fs/promises"
 import { tool } from "@opencode-ai/plugin"
 import packageJson from "./package.json" assert { type: "json" }
+import {
+  EXPERIMENTAL_COMMAND,
+  PLUGIN_ID,
+  SERVER_LOG_FILE,
+  SERVER_RUNTIME_MARKER,
+  commandhandled,
+  diagnosticsenabled,
+  endname,
+  handofffile,
+  makeprompthandoff,
+  makestatushandoff,
+  mergename,
+  openname,
+  statusfile,
+  statusname,
+} from "./protocol.js"
 
 const EXPERIMENTAL_BTW_HANDLED = "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__"
 const BTW_STATUS_HANDLED = "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__"
-const SERVER_LOG_FILE = "/tmp/opencode-bytheway-server.log"
-const RUNTIME_MARKER = "server-btw-open-handoff-v1"
-
-const slashbase = () => {
-  const env = (globalThis.process?.env ?? {})
-  const value = env.OPENCODE_BYTHEWAY_COMMAND?.trim().replace(/^\/+/, "").toLowerCase()
-  if (!value || !/^[a-z][a-z0-9_]*$/.test(value)) return "btw"
-  return value
-}
-
-const handoffnamespace = () => {
-  const value = (globalThis.process?.env ?? {}).OPENCODE_BYTHEWAY_HANDOFF_NAMESPACE?.trim()
-  if (!value) return
-  return value.replace(/[^a-zA-Z0-9_-]/g, "_")
-}
-
-const openname = () => slashbase()
-const endname = () => `${slashbase()}-end`
-const mergename = () => `${slashbase()}-merge`
-
-const commandhandled = (name) => `__OPENCODE_BYTHEWAY_${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_HANDLED__`
 
 const slashcmd = (name, description) => ({
   description,
   template: `/${name}`,
 })
 
-const statuscmd = {
-  description: "Check whether the opencode-bytheway plugin is loaded",
-  template: "/btw-status",
-}
+const statuscmd = () => slashcmd(statusname(), "Check whether the opencode-bytheway plugin is loaded")
 
 const experimentalcmd = {
   description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
@@ -47,9 +39,10 @@ const statustext = (sessionID) => [
 ].join("\n")
 
 const logserver = (stage, data = {}) => {
+  if (!diagnosticsenabled()) return Promise.resolve()
   const line = JSON.stringify({
     time: new Date().toISOString(),
-    runtimeMarker: RUNTIME_MARKER,
+    runtimeMarker: SERVER_RUNTIME_MARKER,
     stage,
     ...data,
   })
@@ -58,31 +51,8 @@ const logserver = (stage, data = {}) => {
 
 const serialize = (value) => JSON.stringify(value, null, 2)
 
-const handofffile = (originSessionID) => {
-  const namespace = handoffnamespace()
-  const token = (originSessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_")
-  return namespace
-    ? `/tmp/opencode-bytheway-handoff-${namespace}-${token}.json`
-    : `/tmp/opencode-bytheway-handoff-${token}.json`
-}
-
-const statusfile = (sessionID) => {
-  const namespace = handoffnamespace()
-  const token = (sessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_")
-  return namespace
-    ? `/tmp/opencode-bytheway-status-${namespace}-${token}.json`
-    : `/tmp/opencode-bytheway-status-${token}.json`
-}
-
 const writehandoff = async (originSessionID, prompt) => {
-  const payload = {
-    type: "experimental-btw",
-    version: 3,
-    mode: "btw.open",
-    originSessionID: originSessionID ?? null,
-    prompt,
-    time: new Date().toISOString(),
-  }
+  const payload = makeprompthandoff(originSessionID, prompt)
   const file = handofffile(originSessionID)
   await writeFile(file, `${serialize(payload)}\n`, "utf8")
   await logserver("handoff.write", {
@@ -93,13 +63,7 @@ const writehandoff = async (originSessionID, prompt) => {
 }
 
 const writestatushandoff = async (sessionID) => {
-  const payload = {
-    type: "opencode-bytheway-status",
-    version: 1,
-    sessionID: sessionID ?? null,
-    serverVersion: packageJson.version,
-    time: new Date().toISOString(),
-  }
+  const payload = makestatushandoff(sessionID, packageJson.version)
   const file = statusfile(sessionID)
   await writeFile(file, `${serialize(payload)}\n`, "utf8")
   await logserver("status_handoff.write", {
@@ -163,7 +127,7 @@ const enter = async (client, sessionID, prompt) => {
 }
 
 export default {
-  id: "opencode-bytheway",
+  id: PLUGIN_ID,
   server: async ({ client } = {}) => ({
     tool: {
       btw_status: tool({
@@ -201,13 +165,13 @@ export default {
         [openname()]: slashcmd(openname(), "Open a by-the-way side session in this terminal"),
         [mergename()]: slashcmd(mergename(), "Append by-the-way text back to the original session and close it"),
         [endname()]: slashcmd(endname(), "Return to the original session and close by-the-way"),
-        "btw-prompt": experimentalcmd,
-        "btw-status": statuscmd,
+        [EXPERIMENTAL_COMMAND]: experimentalcmd,
+        [statusname()]: statuscmd(),
         ...cfg.command,
       }
     },
     "command.execute.before": async (input) => {
-      if (input.command === "btw-status") {
+      if (input.command === statusname()) {
         if (!client) throw new Error("OpenCode client unavailable.")
         await logserver("command.execute.before", {
           command: input.command,
@@ -239,7 +203,7 @@ export default {
         await triggertuicommand(client, tuiCommand, "command.execute.before:trigger_tui_command")
         throw new Error(commandhandled(input.command))
       }
-      if (input.command !== "btw-prompt") return
+      if (input.command !== EXPERIMENTAL_COMMAND) return
       if (!client) throw new Error("OpenCode client unavailable.")
       await logserver("command.execute.before", {
         command: input.command,

@@ -2,6 +2,24 @@ import { TextAttributes } from "@opentui/core";
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { appendFile, readFile, unlink } from "node:fs/promises";
 import packageJson from "./package.json" with { type: "json" };
+import {
+  ACTIVE_STATE_KEY,
+  PLUGIN_ID,
+  TUI_EVENT_LOG_FILE,
+  TUI_RUNTIME_MARKER,
+  TUI_TOAST_LOG_FILE,
+  diagnosticsenabled,
+  endname,
+  handofffile,
+  isprompthandoff,
+  isstatushandoff,
+  mergename,
+  openname,
+  slash,
+  slashbase,
+  statusfile,
+  statusname,
+} from "./protocol.js";
 
 declare namespace JSX {
   interface IntrinsicElements {
@@ -9,29 +27,6 @@ declare namespace JSX {
     text: any;
   }
 }
-
-const id = "opencode-bytheway";
-const toastLogFile = "/tmp/opencode-bytheway-toast.log";
-const eventLogFile = "/tmp/opencode-bytheway-event.log";
-const runtimeMarker = "tui-file-handoff-prompt-v1";
-
-const slashbase = () => {
-  const env = (globalThis as typeof globalThis & {
-    process?: { env?: Record<string, string | undefined> };
-  }).process?.env;
-  const value = env?.["OPENCODE_BYTHEWAY_COMMAND"]
-    ?.trim()
-    .replace(/^\/+/, "")
-    .toLowerCase();
-  if (!value || !/^[a-z][a-z0-9_]*$/.test(value)) return "btw";
-  return value;
-};
-
-const slash = (name: string) => `/${name}`;
-const openname = () => slashbase();
-const endname = () => `${slashbase()}-end`;
-const mergename = () => `${slashbase()}-merge`;
-const experimentaltitle = () => `${slash(openname())} experimental session`;
 
 type Spawn =
   | { mode: "all"; count: number; boundary?: string }
@@ -63,13 +58,22 @@ type StatusHandoff = {
   time?: string;
 };
 
+type PromptHandoff = {
+  type: "experimental-btw";
+  version: 3;
+  mode: "btw.open";
+  originSessionID: string | null;
+  prompt: string;
+  time?: string;
+};
+
 const ui = {
   muted: "#a5a5a5",
   accent: "#5f87ff",
   notice: "#1f2b3d",
 };
 
-const key = "opencode-bytheway.active";
+const key = ACTIVE_STATE_KEY;
 
 const isbtw = (value: unknown): value is Btw => {
   if (!value || typeof value !== "object") return false;
@@ -143,31 +147,6 @@ const errorinfo = (err: unknown) => {
   return { message: String(err) };
 };
 
-const handoffnamespace = () => {
-  const env = (globalThis as typeof globalThis & {
-    process?: { env?: Record<string, string | undefined> };
-  }).process?.env;
-  const value = env?.["OPENCODE_BYTHEWAY_HANDOFF_NAMESPACE"]?.trim();
-  if (!value) return;
-  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
-};
-
-const handofffile = (originSessionID: string | undefined) => {
-  const namespace = handoffnamespace();
-  const token = (originSessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_");
-  return namespace
-    ? `/tmp/opencode-bytheway-handoff-${namespace}-${token}.json`
-    : `/tmp/opencode-bytheway-handoff-${token}.json`;
-};
-
-const statusfile = (sessionID: string | undefined) => {
-  const namespace = handoffnamespace();
-  const token = (sessionID ?? "none").replace(/[^a-zA-Z0-9_-]/g, "_");
-  return namespace
-    ? `/tmp/opencode-bytheway-status-${namespace}-${token}.json`
-    : `/tmp/opencode-bytheway-status-${token}.json`;
-};
-
 const msg = (err: unknown) => {
   if (err instanceof Error) return err.message;
   if (!err || typeof err !== "object") return "Request failed.";
@@ -185,6 +164,7 @@ const tui: TuiPlugin = async (api) => {
 
   const toast = (input: { variant?: "info" | "success" | "warning" | "error"; title?: string; message: string; duration?: number }) => {
     api.ui.toast(input);
+    if (!diagnosticsenabled()) return;
     const route = api.route.current;
     const currentSessionID = route.name === "session" && typeof route.params?.sessionID === "string"
       ? route.params.sessionID
@@ -197,30 +177,30 @@ const tui: TuiPlugin = async (api) => {
       route: route.name,
       sessionID: currentSessionID ?? null,
     });
-    void appendFile(toastLogFile, `${line}\n`, "utf8").catch(() => undefined);
+    void appendFile(TUI_TOAST_LOG_FILE, `${line}\n`, "utf8").catch(() => undefined);
   };
 
   const logevent = (stage: string, data: Record<string, unknown>) => {
+    if (!diagnosticsenabled()) return;
     const route = api.route.current;
     const currentSessionID = route.name === "session" && typeof route.params?.sessionID === "string"
       ? route.params.sessionID
       : undefined;
     const line = JSON.stringify({
       time: new Date().toISOString(),
-      runtimeMarker,
+      runtimeMarker: TUI_RUNTIME_MARKER,
       stage,
       route: route.name,
       sessionID: currentSessionID ?? null,
       ...data,
     });
-    void appendFile(eventLogFile, `${line}\n`, "utf8").catch(() => undefined);
+    void appendFile(TUI_EVENT_LOG_FILE, `${line}\n`, "utf8").catch(() => undefined);
   };
   const logdiagnostic = (stage: string, data: Record<string, unknown> = {}) => {
-    if (process.env.OPENCODE_BYTHEWAY_DIAGNOSTICS !== "1") return;
     logevent(`diagnostic:${stage}`, data);
   };
 
-  logevent("tui:init", { pluginID: id });
+  logevent("tui:init", { pluginID: PLUGIN_ID });
 
   const load = () => {
     if (btw) return btw;
@@ -363,20 +343,8 @@ const tui: TuiPlugin = async (api) => {
     try {
       const text = await readFile(handofffile(originSessionID), "utf8");
       const value = JSON.parse(text);
-      if (!value || typeof value !== "object") return;
-      if (value.type !== "experimental-btw") return;
-      if (value.version !== 3) return;
-      if (value.mode !== "btw.open") return;
-      if (value.originSessionID !== null && typeof value.originSessionID !== "string") return;
-      if (typeof value.prompt !== "string") return;
-      return value as {
-        type: "experimental-btw";
-        version: 3;
-        mode: "btw.open";
-        originSessionID: string | null;
-        prompt: string;
-        time?: string;
-      };
+      if (!isprompthandoff(value)) return;
+      return value as PromptHandoff;
     } catch {
       return;
     }
@@ -390,12 +358,7 @@ const tui: TuiPlugin = async (api) => {
     try {
       const text = await readFile(statusfile(sessionID), "utf8");
       const value = JSON.parse(text);
-      if (!value || typeof value !== "object") return;
-      if (value.type !== "opencode-bytheway-status") return;
-      if (value.version !== 1) return;
-      if (value.sessionID !== null && typeof value.sessionID !== "string") return;
-      if (value.sessionID !== (sessionID ?? null)) return;
-      if (typeof value.serverVersion !== "string") return;
+      if (!isstatushandoff(value, sessionID)) return;
       return value as StatusHandoff;
     } catch {
       return;
@@ -439,19 +402,20 @@ const tui: TuiPlugin = async (api) => {
     return !next?.error;
   };
 
-  const enter = async () => {
-    const sessionID = current();
-    const state = await getstate();
+  const stateforentry = (sessionID: string | undefined, state: Btw | undefined) => {
     const staleState = state && sessionID && state.origin !== sessionID && state.temp !== sessionID ? state : undefined;
-    if (staleState) {
-      logdiagnostic("enter.mismatched_state", {
-        sessionID,
-        stateOrigin: staleState.origin,
-        stateTemp: staleState.temp,
-      });
-      save(undefined);
-    }
-    const activeState = staleState ? undefined : state;
+    if (!staleState) return state;
+
+    logdiagnostic("enter.mismatched_state", {
+      sessionID,
+      stateOrigin: staleState.origin,
+      stateTemp: staleState.temp,
+    });
+    save(undefined);
+    return undefined;
+  };
+
+  const resumeactiveentry = async (sessionID: string | undefined, activeState: Btw | undefined) => {
     logdiagnostic("enter.preflight", {
       sessionID: sessionID ?? null,
       hasState: Boolean(activeState),
@@ -459,7 +423,9 @@ const tui: TuiPlugin = async (api) => {
       stateTemp: activeState?.temp ?? null,
       kvReady: api.kv.ready,
     });
-    if (activeState && activeState.temp === sessionID) {
+
+    if (!activeState) return false;
+    if (activeState.temp === sessionID) {
       logdiagnostic("enter.already_inside", {
         sessionID: sessionID ?? null,
         stateOrigin: activeState.origin,
@@ -469,82 +435,113 @@ const tui: TuiPlugin = async (api) => {
         variant: "warning",
         message: `Already inside a ${slash(openname())} session. Run ${slash(endname())} to return.`,
       });
-      return;
+      return true;
     }
-    if (activeState) {
-      const temp = await sessioninfo(activeState.temp);
-      logdiagnostic("enter.existing_temp", {
+
+    const temp = await sessioninfo(activeState.temp);
+    logdiagnostic("enter.existing_temp", {
+      stateOrigin: activeState.origin,
+      stateTemp: activeState.temp,
+      found: Boolean(temp?.id),
+      parentID: temp?.parentID ?? null,
+    });
+    if (temp?.id && !temp.parentID) {
+      logdiagnostic("enter.reuse_temp", {
         stateOrigin: activeState.origin,
         stateTemp: activeState.temp,
-        found: Boolean(temp?.id),
-        parentID: temp?.parentID ?? null,
       });
-      if (temp?.parentID) {
-        save(undefined);
-      } else if (temp?.id) {
-        logdiagnostic("enter.reuse_temp", {
-          stateOrigin: activeState.origin,
-          stateTemp: activeState.temp,
-        });
-        api.route.navigate("session", { sessionID: activeState.temp });
-        return;
-      }
-      save(undefined);
+      api.route.navigate("session", { sessionID: activeState.temp });
+      return true;
     }
 
-    try {
-      logevent("enter:start", { sessionID, hasState: Boolean(activeState) });
-      const source = await origin();
-      const sourceID = source.sessionID;
-      logevent("enter:origin", { sessionID: sourceID, created: source.created });
-      const handoff = await readhandoff(sourceID);
-      const experimental = handoff && handoff.originSessionID === sourceID ? handoff : undefined;
-      if (experimental) {
-        await clearhandoff(sourceID);
-        logevent("experimental:claimed_handoff", {
-          originSessionID: sourceID,
-          promptLength: experimental.prompt.length,
-        });
-      }
-      const cut = await cutoff(sourceID);
-      logevent("enter:cutoff", { sessionID: sourceID, mode: cut.mode, count: cut.count, boundary: cut.boundary });
-      const temp = await fork(sourceID, cut);
-      logevent("enter:fork", { originSessionID: sourceID, tempSessionID: temp });
-      await label(temp);
-      save({ origin: sourceID, temp, baseCount: cut.count });
-      api.route.navigate("session", { sessionID: temp });
-      if (experimental) {
-        if (experimental.prompt.trim()) {
-          const seeded = await api.client.session.prompt({
-            sessionID: temp,
-            parts: [{ type: "text", text: experimental.prompt }],
-          });
-          if (seeded?.error) throw seeded.error;
+    save(undefined);
+    return false;
+  };
 
-          const after = await messages(temp);
-          const baseCount = Math.max(after.length, cut.count + 2);
-          save({ origin: sourceID, temp, baseCount });
-          logevent("experimental:prompted", {
-            originSessionID: sourceID,
-            tempSessionID: temp,
-            baseCount,
-            promptLength: experimental.prompt.length,
-          });
-        }
-        return;
-      }
-      const DialogAlert = api.ui.DialogAlert;
-      api.ui.dialog.setSize("large");
-      api.ui.dialog.replace(() =>
-        DialogAlert({
-          title: `Entered ${slash(openname())} Session`,
-          message:
-            `You are now in a temporary ${slash(openname())} session in this same terminal. Run ${slash(endname())} to return to your original session.`,
-          onConfirm: () => {
-            api.ui.dialog.clear();
-          },
-        }),
-      );
+  const claimexperimentalhandoff = async (sourceID: string) => {
+    const handoff = await readhandoff(sourceID);
+    const experimental = handoff && handoff.originSessionID === sourceID ? handoff : undefined;
+    if (!experimental) return;
+
+    await clearhandoff(sourceID);
+    logevent("experimental:claimed_handoff", {
+      originSessionID: sourceID,
+      promptLength: experimental.prompt.length,
+    });
+    return experimental;
+  };
+
+  const seedexperimentalprompt = async (sourceID: string, temp: string, cut: Spawn, experimental: PromptHandoff) => {
+    if (!experimental.prompt.trim()) return;
+
+    logevent("experimental:prompt:start", {
+      originSessionID: sourceID,
+      tempSessionID: temp,
+      promptLength: experimental.prompt.length,
+    });
+    const seeded = await api.client.session.prompt({
+      sessionID: temp,
+      parts: [{ type: "text", text: experimental.prompt }],
+    });
+    if (seeded?.error) throw seeded.error;
+
+    const after = await messages(temp);
+    const baseCount = Math.max(after.length, cut.count + 2);
+    save({ origin: sourceID, temp, baseCount });
+    logevent("experimental:prompted", {
+      originSessionID: sourceID,
+      tempSessionID: temp,
+      baseCount,
+      promptLength: experimental.prompt.length,
+    });
+  };
+
+  const showentrydialog = () => {
+    const DialogAlert = api.ui.DialogAlert;
+    api.ui.dialog.setSize("large");
+    api.ui.dialog.replace(() =>
+      DialogAlert({
+        title: `Entered ${slash(openname())} Session`,
+        message:
+          `You are now in a temporary ${slash(openname())} session in this same terminal. Run ${slash(endname())} to return to your original session.`,
+        onConfirm: () => {
+          api.ui.dialog.clear();
+        },
+      }),
+    );
+  };
+
+  const openentry = async (sessionID: string | undefined, activeState: Btw | undefined) => {
+    logevent("enter:start", { sessionID, hasState: Boolean(activeState) });
+    const source = await origin();
+    const sourceID = source.sessionID;
+    logevent("enter:origin", { sessionID: sourceID, created: source.created });
+
+    const experimental = await claimexperimentalhandoff(sourceID);
+    const cut = await cutoff(sourceID);
+    logevent("enter:cutoff", { sessionID: sourceID, mode: cut.mode, count: cut.count, boundary: cut.boundary });
+    const temp = await fork(sourceID, cut);
+    logevent("enter:fork", { originSessionID: sourceID, tempSessionID: temp });
+    const labeled = await label(temp);
+    logevent("enter:label", { originSessionID: sourceID, tempSessionID: temp, labeled });
+    save({ origin: sourceID, temp, baseCount: cut.count });
+    api.route.navigate("session", { sessionID: temp });
+
+    if (experimental) {
+      await seedexperimentalprompt(sourceID, temp, cut, experimental);
+      return;
+    }
+
+    showentrydialog();
+  };
+
+  const enter = async () => {
+    const sessionID = current();
+    const activeState = stateforentry(sessionID, await getstate());
+    if (await resumeactiveentry(sessionID, activeState)) return;
+
+    try {
+      await openentry(sessionID, activeState);
     } catch (err) {
       logevent("enter:error", { error: errorinfo(err) });
       toast({
@@ -752,7 +749,7 @@ const tui: TuiPlugin = async (api) => {
         value: "btw.status",
         description: "Check whether the opencode-bytheway plugin is loaded",
         category: "Session",
-        slash: { name: `${slashbase()}-status` },
+        slash: { name: statusname() },
         onSelect: () => {
           logdiagnostic("command.select", { command: "btw.status", sessionID: current() ?? null });
           return status();
@@ -763,7 +760,7 @@ const tui: TuiPlugin = async (api) => {
 };
 
 const plugin: TuiPluginModule & { id: string } = {
-  id,
+  id: PLUGIN_ID,
   tui,
 };
 
