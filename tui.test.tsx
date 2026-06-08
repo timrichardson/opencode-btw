@@ -46,6 +46,12 @@ function textMessage(id: string, role: "user" | "assistant", text: string, compl
   }
 }
 
+function largeSourceMessages(count = 501) {
+  return Array.from({ length: count }, (_, index) =>
+    textMessage(`msg_large_${index}`, index % 2 === 0 ? "user" : "assistant", `message ${index}`, index % 2 === 1),
+  )
+}
+
 function setup(input?: {
   session?: boolean
   sessionID?: string
@@ -88,10 +94,11 @@ function setup(input?: {
   let fork: Record<string, unknown> | undefined
   let prompted: Record<string, unknown> | undefined
   let appended: Record<string, unknown> | undefined
+  const originSessionID = input?.sessionID ?? "ses_main"
   let route: any =
     input?.session === false
       ? { name: "home" }
-      : { name: "session", params: { sessionID: input?.sessionID ?? "ses_main" } }
+      : { name: "session", params: { sessionID: originSessionID } }
   const expectFlatParams = (args: Record<string, unknown> | undefined, allowed: string[], required: string[] = []) => {
     expect(args?.path).toBeUndefined()
     expect(args?.body).toBeUndefined()
@@ -182,7 +189,7 @@ function setup(input?: {
         async messages(args: Record<string, unknown>) {
           calls.push("messages")
           expectFlatParams(args, ["sessionID", "limit"], ["sessionID"])
-          if (args.sessionID !== "ses_main") return { data: input?.tempMessages ?? [] }
+          if (args.sessionID !== originSessionID) return { data: input?.tempMessages ?? [] }
           if (input?.originMessages) return { data: input.originMessages }
           return {
             data: input?.sourceTail
@@ -909,6 +916,25 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(fork()).toEqual({ sessionID: "ses_main", messageID: undefined })
     expect(calls).toEqual(["children", "messages", "fork", "update"])
+  })
+
+  test("does not block large source sessions before forking", async () => {
+    const sourceID = "ses_large_source"
+    const { api, calls, fork, kv, nav, rows, toasts } = setup({
+      sessionID: sourceID,
+      originMessages: largeSourceMessages(),
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+
+    expect(fork()).toEqual({ sessionID: sourceID, messageID: "msg_large_500" })
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: sourceID, temp: "ses_btw", baseCount: 501 })
+    expect(calls).toEqual(["children", "messages", "fork", "update"])
+    expect(toasts).toEqual([])
   })
 
   test("shows an error toast when opening /btw fails", async () => {

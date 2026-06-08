@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.14
+
+- add regression coverage that `/btw` continues to fork large source sessions without a fork guard
+
 ## 0.3.13
 
 - share bytheway protocol helpers between the server and TUI plugin halves
