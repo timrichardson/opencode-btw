@@ -18,9 +18,6 @@ import {
   statusname,
 } from "./protocol.js"
 
-const EXPERIMENTAL_BTW_HANDLED = "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__"
-const BTW_STATUS_HANDLED = "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__"
-
 const slashcmd = (name, description) => ({
   description,
   template: `/${name}`,
@@ -170,7 +167,14 @@ export default {
         ...cfg.command,
       }
     },
-    "command.execute.before": async (input) => {
+    "command.execute.before": async (input, output = {}) => {
+      const markhandled = (command) => {
+        if ("handled" in output) {
+          output.handled = true
+          return
+        }
+        throw new Error(commandhandled(command))
+      }
       if (input.command === statusname()) {
         if (!client) throw new Error("OpenCode client unavailable.")
         await logserver("command.execute.before", {
@@ -179,7 +183,8 @@ export default {
         })
         await writestatushandoff(input.sessionID)
         await triggertuicommand(client, "btw.status", "command.execute.before:show_status")
-        throw new Error(BTW_STATUS_HANDLED)
+        markhandled(input.command)
+        return
       }
       const tuiCommands = new Map([
         [openname(), "btw.open"],
@@ -198,10 +203,12 @@ export default {
         })
         if (input.command === openname() && prompt) {
           await enter(client, input.sessionID, prompt)
-          throw new Error(commandhandled(input.command))
+          markhandled(input.command)
+          return
         }
         await triggertuicommand(client, tuiCommand, "command.execute.before:trigger_tui_command")
-        throw new Error(commandhandled(input.command))
+        markhandled(input.command)
+        return
       }
       if (input.command !== EXPERIMENTAL_COMMAND) return
       if (!client) throw new Error("OpenCode client unavailable.")
@@ -211,7 +218,7 @@ export default {
         promptLength: typeof input.arguments === "string" ? input.arguments.length : 0,
       })
       await enter(client, input.sessionID, input.arguments)
-      throw new Error(EXPERIMENTAL_BTW_HANDLED)
+      markhandled(input.command)
     },
   }),
 }

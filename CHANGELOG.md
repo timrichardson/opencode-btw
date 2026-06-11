@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.15
+
+- support OpenCode command hooks that mark slash commands handled through the hook output object
+
 ## 0.3.14
 
 - add regression coverage that `/btw` continues to fork large source sessions without a fork guard

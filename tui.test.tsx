@@ -569,7 +569,7 @@ describe("opencode-bytheway tui plugin", () => {
     const server = await serverPlugin.server({ client })
     const hook = server["command.execute.before"]
     await expect(hook?.({ command: "btw-prompt", sessionID: "ses_exp_server_hook", arguments: "investigate this" }, { parts: [] })).rejects.toThrow(
-      "__OPENCODE_BYTHEWAY_EXPERIMENTAL_BTW_HANDLED__",
+      "__OPENCODE_BYTHEWAY_BTW_PROMPT_HANDLED__",
     )
     expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_hook"), "utf8"))).toMatchObject({
       type: "experimental-btw",
