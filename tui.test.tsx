@@ -46,6 +46,24 @@ function textMessage(id: string, role: "user" | "assistant", text: string, compl
   }
 }
 
+function emptyTurn(created = Date.now()) {
+  return [
+    {
+      info: { id: "msg_empty_user", role: "user", time: { created } },
+      parts: [],
+    },
+    {
+      info: {
+        id: "msg_empty_assistant",
+        role: "assistant",
+        parentID: "msg_empty_user",
+        time: { created: created + 1 },
+      },
+      parts: [],
+    },
+  ]
+}
+
 function largeSourceMessages(count = 501) {
   return Array.from({ length: count }, (_, index) =>
     textMessage(`msg_large_${index}`, index % 2 === 0 ? "user" : "assistant", `message ${index}`, index % 2 === 1),
@@ -72,6 +90,8 @@ function setup(input?: {
   childSessions?: any[]
   deleteError?: Error
   deleteReject?: Error
+  deleteMessageError?: Error
+  abortError?: Error
   promptError?: Error
   promptAsyncError?: Error
   promptResult?: unknown
@@ -85,6 +105,7 @@ function setup(input?: {
   const nav: any[] = []
   const reg: Array<() => any[]> = []
   const slots: any[] = []
+  const keymapLayers: any[] = []
   const kv = new Map<string, unknown>()
   const events = new Map<string, Array<(event: any) => void>>()
   let creates = 0
@@ -149,6 +170,12 @@ function setup(input?: {
         return `slot:${slots.length}`
       },
     },
+    keymap: {
+      registerLayer(input: unknown) {
+        keymapLayers.push(input)
+        return () => {}
+      },
+    },
     kv: {
       ready: true,
       get(key: string, fallback?: unknown) {
@@ -164,6 +191,8 @@ function setup(input?: {
     },
     ui: {
       DialogAlert: (props: Record<string, unknown>) => ({ type: "alert", props }),
+      Prompt: (props: Record<string, unknown>) => ({ type: "prompt", props }),
+      Slot: (props: Record<string, unknown>) => ({ type: "slot", props }),
       dialog: {
         replace(render: () => unknown) {
           views.push(render())
@@ -307,6 +336,22 @@ function setup(input?: {
           if (input?.deleteError) return { error: input.deleteError }
           return {}
         },
+        async deleteMessage(args: Record<string, unknown>) {
+          calls.push("deleteMessage")
+          expectFlatParams(args, ["sessionID", "messageID"], ["sessionID", "messageID"])
+          if (input?.deleteMessageError) return { error: input.deleteMessageError }
+          if (Array.isArray(input?.originMessages)) {
+            const index = input.originMessages.findIndex((message) => message?.info?.id === args.messageID)
+            if (index >= 0) input.originMessages.splice(index, 1)
+          }
+          return { data: true }
+        },
+        async abort(args: Record<string, unknown>) {
+          calls.push("abort")
+          expectFlatParams(args, ["sessionID"], ["sessionID"])
+          if (input?.abortError) return { error: input.abortError }
+          return { data: true }
+        },
       },
       tui: {
         async selectSession(args: Record<string, unknown>) {
@@ -337,6 +382,7 @@ function setup(input?: {
     appended: () => appended,
     created: () => created,
     fork: () => fork,
+    keymapLayers,
     kv,
     nav,
     prompted: () => prompted,
@@ -415,9 +461,9 @@ describe("opencode-bytheway tui plugin", () => {
     rmSync(statusFile("ses_status"), { force: true })
     const server = await serverPlugin.server({ client })
     const hook = server["command.execute.before"]
-    await expect(hook?.({ command: "btw-status", sessionID: "ses_status", arguments: "" }, { parts: [] })).rejects.toThrow(
-      "__OPENCODE_BYTHEWAY_BTW_STATUS_HANDLED__",
-    )
+    const output = { handled: false, parts: [] }
+    await expect(hook?.({ command: "btw-status", sessionID: "ses_status", arguments: "" }, output)).resolves.toBeUndefined()
+    expect(output.handled).toBe(true)
     expect(JSON.parse(readFileSync(statusFile("ses_status"), "utf8"))).toMatchObject({
       type: "opencode-bytheway-status",
       version: 1,
@@ -440,16 +486,12 @@ describe("opencode-bytheway tui plugin", () => {
 
     const server = await serverPlugin.server({ client })
     const hook = server["command.execute.before"]
+    const output = { handled: false, parts: [] }
 
-    await expect(hook?.({ command: "btw", sessionID: "ses_main", arguments: "" }, { parts: [] })).rejects.toThrow(
-      "__OPENCODE_BYTHEWAY_BTW_HANDLED__",
-    )
-    await expect(hook?.({ command: "btw-merge", sessionID: "ses_btw", arguments: "" }, { parts: [] })).rejects.toThrow(
-      "__OPENCODE_BYTHEWAY_BTW_MERGE_HANDLED__",
-    )
-    await expect(hook?.({ command: "btw-end", sessionID: "ses_btw", arguments: "" }, { parts: [] })).rejects.toThrow(
-      "__OPENCODE_BYTHEWAY_BTW_END_HANDLED__",
-    )
+    await expect(hook?.({ command: "btw", sessionID: "ses_main", arguments: "" }, output)).resolves.toBeUndefined()
+    await expect(hook?.({ command: "btw-merge", sessionID: "ses_btw", arguments: "" }, output)).resolves.toBeUndefined()
+    await expect(hook?.({ command: "btw-end", sessionID: "ses_btw", arguments: "" }, output)).resolves.toBeUndefined()
+    expect(output.handled).toBe(true)
     expect(published).toEqual(["btw.open", "btw.merge", "btw.end"])
   })
 
@@ -467,10 +509,10 @@ describe("opencode-bytheway tui plugin", () => {
 
     const server = await serverPlugin.server({ client })
     const hook = server["command.execute.before"]
+    const output = { handled: false, parts: [] }
 
-    await expect(hook?.({ command: "btw", sessionID: "ses_btw_query", arguments: "tell me about the anzac legend" }, { parts: [] })).rejects.toThrow(
-      "__OPENCODE_BYTHEWAY_BTW_HANDLED__",
-    )
+    await expect(hook?.({ command: "btw", sessionID: "ses_btw_query", arguments: "tell me about the anzac legend" }, output)).resolves.toBeUndefined()
+    expect(output.handled).toBe(true)
     expect(published).toEqual(["btw.open"])
     expect(JSON.parse(readFileSync(handoffFile("ses_btw_query"), "utf8"))).toMatchObject({
       type: "experimental-btw",
@@ -568,9 +610,9 @@ describe("opencode-bytheway tui plugin", () => {
 
     const server = await serverPlugin.server({ client })
     const hook = server["command.execute.before"]
-    await expect(hook?.({ command: "btw-prompt", sessionID: "ses_exp_server_hook", arguments: "investigate this" }, { parts: [] })).rejects.toThrow(
-      "__OPENCODE_BYTHEWAY_BTW_PROMPT_HANDLED__",
-    )
+    const output = { handled: false, parts: [] }
+    await expect(hook?.({ command: "btw-prompt", sessionID: "ses_exp_server_hook", arguments: "investigate this" }, output)).resolves.toBeUndefined()
+    expect(output.handled).toBe(true)
     expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_hook"), "utf8"))).toMatchObject({
       type: "experimental-btw",
       version: 3,
@@ -605,6 +647,37 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "btw-end" })
     expect(cmd(rows(), "btw.status")?.slash).toEqual({ name: "btw-status" })
     expect(cmd(rows(), "btw.popup")).toBeUndefined()
+  })
+
+  test("does not bind Enter for non-btw prompt slash commands", async () => {
+    const { api, keymapLayers, slot } = setup()
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    const layer = keymapLayers.find((item) => item?.bindings?.some((binding: any) => binding.key === "return"))
+    expect(layer).toBeTruthy()
+
+    const prompt: any = {
+      focused: true,
+      current: { input: "/sessions", parts: [] },
+      set() {},
+      reset() {},
+      blur() {},
+      focus() {},
+      submit() {},
+    }
+    const rendered = slot("session_prompt").slots.session_prompt({}, { session_id: "ses_main" })
+    rendered.props.ref(prompt)
+
+    expect(layer.enabled()).toBe(false)
+    prompt.current.input = "/btw this is a topic"
+    expect(layer.enabled()).toBe(true)
+    prompt.current.input = "/btw-status"
+    expect(layer.enabled()).toBe(true)
+    prompt.current.input = "/help"
+    expect(layer.enabled()).toBe(false)
+    prompt.focused = false
+    prompt.current.input = "/btw another topic"
+    expect(layer.enabled()).toBe(false)
   })
 
   test("registers a sidebar indicator slot", async () => {
@@ -1197,6 +1270,38 @@ describe("opencode-bytheway tui plugin", () => {
     expect(views).toEqual([])
     expect(() => readFileSync(handoffFile("ses_exp_origin_a"), "utf8")).toThrow()
     rmSync(handoffFile("ses_exp_origin_a"), { force: true })
+  })
+
+  test("deletes a handoff-generated empty origin turn before forking", async () => {
+    const originMessages = emptyTurn()
+    const { api, calls, fork, kv, rows } = setup({
+      sessionID: "ses_exp_origin_cleanup",
+      originMessages,
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    writeFileSync(handoffFile("ses_exp_origin_cleanup"), `${JSON.stringify({
+      type: "experimental-btw",
+      version: 3,
+      mode: "btw.open",
+      originSessionID: "ses_exp_origin_cleanup",
+      prompt: "cleanup prompt",
+      time: new Date(Date.now() - 10).toISOString(),
+    })}\n`)
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+
+    expect(originMessages).toEqual([])
+    expect(fork()).toEqual({ sessionID: "ses_exp_origin_cleanup", messageID: undefined })
+    expect(kv.get("opencode-bytheway.active")).toEqual({
+      origin: "ses_exp_origin_cleanup",
+      temp: "ses_btw",
+      baseCount: 2,
+    })
+    expect(calls).toContain("deleteMessage")
+    rmSync(handoffFile("ses_exp_origin_cleanup"), { force: true })
   })
 
   test("uses the experimental handoff after clearing active state from another origin", async () => {

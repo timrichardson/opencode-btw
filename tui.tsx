@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core";
-import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
+import type { TuiPlugin, TuiPluginModule, TuiPromptRef } from "@opencode-ai/plugin/tui";
 import { appendFile, readFile, unlink } from "node:fs/promises";
 import packageJson from "./package.json" with { type: "json" };
 import {
@@ -42,8 +42,14 @@ type SessionMessage = {
   info: {
     id: string;
     role: "user" | "assistant";
+    parentID?: string;
+    time?: {
+      created?: number;
+      completed?: number;
+    };
   };
   parts: Array<{
+    id?: string;
     type: string;
     text?: string;
     ignored?: boolean;
@@ -74,6 +80,9 @@ const ui = {
 };
 
 const key = ACTIVE_STATE_KEY;
+const emptyCommandTurnTolerance = 5000;
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const isbtw = (value: unknown): value is Btw => {
   if (!value || typeof value !== "object") return false;
@@ -161,6 +170,8 @@ const msg = (err: unknown) => {
 const tui: TuiPlugin = async (api) => {
   let btw: Btw | undefined;
   let resolving: Promise<Btw | undefined> | undefined;
+  let homePrompt: TuiPromptRef | undefined;
+  const sessionPrompts = new Map<string, TuiPromptRef>();
 
   const toast = (input: { variant?: "info" | "success" | "warning" | "error"; title?: string; message: string; duration?: number }) => {
     api.ui.toast(input);
@@ -298,26 +309,38 @@ const tui: TuiPlugin = async (api) => {
     return { sessionID: next.data.id, created: true };
   };
 
-  const cutoff = async (sessionID: string): Promise<Spawn> => {
+  const cutoff = async (sessionID: string, options?: { emptyCommandTurnSince?: number }): Promise<Spawn> => {
     const list = await api.client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined);
     if (!list?.data?.length) return { mode: "all", count: 0 };
+    const stripped = options
+      ? withoutemptycommandturn(list.data as SessionMessage[], options.emptyCommandTurnSince)
+      : { items: list.data as SessionMessage[] };
+    const items = stripped.items;
+    const stopBefore = stripped.messageID;
+    if (!items.length) {
+      if (stopBefore) return { mode: "cut", count: 0, boundary: stopBefore, messageID: stopBefore };
+      return { mode: "all", count: 0 };
+    }
 
     let last = -1;
-    for (let i = list.data.length - 1; i >= 0; i--) {
-      const item = list.data[i].info;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i].info;
       if (item.role !== "assistant") continue;
-      if (!item.time.completed) continue;
+      if (!item.time?.completed) continue;
       if (!item.finish || ["tool-calls", "unknown"].includes(item.finish))
         continue;
       last = i;
       break;
     }
 
-    if (last < 0) return { mode: "all", count: list.data.length };
-    const boundary = list.data[last].info.id;
-    const next = list.data[last + 1]?.info.id;
-    if (!next) return { mode: "all", count: list.data.length, boundary };
-    return { mode: "cut", count: list.data.length, boundary, messageID: next };
+    if (last < 0) {
+      if (stopBefore) return { mode: "cut", count: items.length, boundary: stopBefore, messageID: stopBefore };
+      return { mode: "all", count: items.length };
+    }
+    const boundary = items[last].info.id;
+    const next = items[last + 1]?.info.id ?? stopBefore;
+    if (!next) return { mode: "all", count: items.length, boundary };
+    return { mode: "cut", count: items.length, boundary, messageID: next };
   };
 
   const mergetext = (items: SessionMessage[], start: number) => {
@@ -367,6 +390,92 @@ const tui: TuiPlugin = async (api) => {
 
   const clearstatushandoff = async (sessionID: string | undefined) => {
     await unlink(statusfile(sessionID)).catch(() => undefined);
+  };
+
+  const handofftime = (handoff: PromptHandoff | undefined) => {
+    const time = Date.parse(handoff?.time ?? "");
+    return Number.isFinite(time) ? time : undefined;
+  };
+
+  const emptycommandturn = (items: SessionMessage[], since?: number) => {
+    if (items.length < 2) return;
+    const user = items.at(-2);
+    const assistant = items.at(-1);
+    if (!user || !assistant) return;
+    if (user.info.role !== "user") return;
+    if (assistant.info.role !== "assistant") return;
+    if (assistant.info.parentID !== user.info.id) return;
+    if (user.parts.length || assistant.parts.length) return;
+
+    const created = user.info.time?.created;
+    if (since !== undefined && created !== undefined && created < since - emptyCommandTurnTolerance)
+      return;
+
+    return { user, assistant };
+  };
+
+  const deleteemptycommandturn = async (sessionID: string, since?: number) => {
+    const client = api.client.session as typeof api.client.session & {
+      abort?: (args: { sessionID: string }) => Promise<{ error?: unknown } | undefined>;
+      deleteMessage?: (args: { sessionID: string; messageID: string }) => Promise<{ error?: unknown } | undefined>;
+    };
+    if (typeof client.deleteMessage !== "function") {
+      logevent("experimental:cleanup:unavailable", { originSessionID: sessionID });
+      return false;
+    }
+
+    let aborted = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const turn = emptycommandturn(await messages(sessionID), since);
+      if (!turn) {
+        await delay(25);
+        continue;
+      }
+
+      const remove = async (messageID: string) => {
+        const result = await client.deleteMessage!({ sessionID, messageID }).catch((error) => ({ error }));
+        if (result?.error) {
+          logevent("experimental:cleanup:delete_error", {
+            originSessionID: sessionID,
+            messageID,
+            attempt,
+            error: errorinfo(result.error),
+          });
+          return false;
+        }
+        return true;
+      };
+
+      const removedAssistant = await remove(turn.assistant.info.id);
+      const removedUser = removedAssistant ? await remove(turn.user.info.id) : false;
+      if (removedAssistant && removedUser) {
+        logevent("experimental:cleanup:deleted", {
+          originSessionID: sessionID,
+          userMessageID: turn.user.info.id,
+          assistantMessageID: turn.assistant.info.id,
+          attempt,
+        });
+        return true;
+      }
+
+      if (!aborted && typeof client.abort === "function") {
+        aborted = true;
+        const result = await client.abort({ sessionID }).catch((error) => ({ error }));
+        logevent(result?.error ? "experimental:cleanup:abort_error" : "experimental:cleanup:aborted", {
+          originSessionID: sessionID,
+          error: result?.error ? errorinfo(result.error) : undefined,
+        });
+      }
+      await delay(25);
+    }
+
+    logevent("experimental:cleanup:miss", { originSessionID: sessionID });
+    return false;
+  };
+
+  const withoutemptycommandturn = (items: SessionMessage[], since?: number) => {
+    const turn = emptycommandturn(items, since);
+    return turn ? { items: items.slice(0, -2), messageID: turn.user.info.id } : { items };
   };
 
   const fork = async (sessionID: string, cut: Spawn) => {
@@ -479,13 +588,20 @@ const tui: TuiPlugin = async (api) => {
       tempSessionID: temp,
       promptLength: experimental.prompt.length,
     });
-    const seeded = await api.client.session.prompt({
+    const payload = {
       sessionID: temp,
       parts: [{ type: "text", text: experimental.prompt }],
-    });
+    };
+
+    const promptAsync = "promptAsync" in api.client.session && typeof api.client.session.promptAsync === "function"
+      ? api.client.session.promptAsync.bind(api.client.session)
+      : undefined;
+    const seeded = promptAsync
+      ? await promptAsync(payload)
+      : await api.client.session.prompt(payload);
     if (seeded?.error) throw seeded.error;
 
-    const after = await messages(temp);
+    const after = promptAsync ? [] : await messages(temp);
     const baseCount = Math.max(after.length, cut.count + 2);
     save({ origin: sourceID, temp, baseCount });
     logevent("experimental:prompted", {
@@ -511,14 +627,25 @@ const tui: TuiPlugin = async (api) => {
     );
   };
 
-  const openentry = async (sessionID: string | undefined, activeState: Btw | undefined) => {
+  const openentry = async (sessionID: string | undefined, activeState: Btw | undefined, directPrompt?: string) => {
     logevent("enter:start", { sessionID, hasState: Boolean(activeState) });
     const source = await origin();
     const sourceID = source.sessionID;
     logevent("enter:origin", { sessionID: sourceID, created: source.created });
 
-    const experimental = await claimexperimentalhandoff(sourceID);
-    const cut = await cutoff(sourceID);
+    const claimed = directPrompt === undefined ? await claimexperimentalhandoff(sourceID) : undefined;
+    const experimental = directPrompt !== undefined
+      ? {
+          type: "experimental-btw" as const,
+          version: 3 as const,
+          mode: "btw.open" as const,
+          originSessionID: sourceID,
+          prompt: directPrompt,
+        }
+      : claimed;
+    const cleanupSince = handofftime(claimed);
+    if (claimed) await deleteemptycommandturn(sourceID, cleanupSince);
+    const cut = await cutoff(sourceID, claimed ? { emptyCommandTurnSince: cleanupSince } : undefined);
     logevent("enter:cutoff", { sessionID: sourceID, mode: cut.mode, count: cut.count, boundary: cut.boundary });
     const temp = await fork(sourceID, cut);
     logevent("enter:fork", { originSessionID: sourceID, tempSessionID: temp });
@@ -535,13 +662,13 @@ const tui: TuiPlugin = async (api) => {
     showentrydialog();
   };
 
-  const enter = async () => {
+  const enter = async (directPrompt?: string) => {
     const sessionID = current();
     const activeState = stateforentry(sessionID, await getstate());
     if (await resumeactiveentry(sessionID, activeState)) return;
 
     try {
-      await openentry(sessionID, activeState);
+      await openentry(sessionID, activeState, directPrompt);
     } catch (err) {
       logevent("enter:error", { error: errorinfo(err) });
       toast({
@@ -666,9 +793,105 @@ const tui: TuiPlugin = async (api) => {
     });
   };
 
+  const activeprompt = () => {
+    const route = api.route.current;
+    if (route.name === "session" && typeof route.params?.sessionID === "string")
+      return sessionPrompts.get(route.params.sessionID);
+    if (route.name === "home") return homePrompt;
+  };
+
+  const parsepromptcommand = (input: string) => {
+    const trimmed = input.trimStart();
+    if (!trimmed.startsWith("/")) return;
+    const match = trimmed.slice(1).match(/^(\S+)(?:\s+([\s\S]*))?$/);
+    if (!match) return;
+    return { name: match[1], arguments: match[2] ?? "" };
+  };
+
+  const isbtwpromptcommand = (input: string) => {
+    const command = parsepromptcommand(input);
+    if (!command) return false;
+    return [openname(), mergename(), endname(), statusname()].includes(command.name);
+  };
+
+  const handlepromptsubmit = () => {
+    const prompt = activeprompt();
+    if (!prompt?.focused) return false;
+
+    const command = parsepromptcommand(prompt.current.input);
+    if (!command) return false;
+
+    if (command.name === openname()) {
+      const text = command.arguments;
+      prompt.reset();
+      void enter(text.trim() ? text : undefined);
+      return true;
+    }
+    if (command.name === mergename()) {
+      prompt.reset();
+      void merge();
+      return true;
+    }
+    if (command.name === endname()) {
+      prompt.reset();
+      void end();
+      return true;
+    }
+    if (command.name === statusname()) {
+      prompt.reset();
+      void status();
+      return true;
+    }
+
+    return false;
+  };
+
+  api.keymap?.registerLayer?.({
+    priority: 1000,
+    enabled: () => {
+      const prompt = activeprompt();
+      return Boolean(prompt?.focused && isbtwpromptcommand(prompt.current.input));
+    },
+    commands: [
+      {
+        name: "prompt.submit",
+        hidden: true,
+        run: handlepromptsubmit,
+      },
+    ],
+    bindings: [{ key: "return", cmd: "prompt.submit" }],
+  });
+
   api.slots.register({
     order: 60,
     slots: {
+      home_prompt(_ctx, value) {
+        const bind = (ref: TuiPromptRef | undefined) => {
+          homePrompt = ref;
+          if (typeof value.ref === "function") value.ref(ref);
+        };
+        return api.ui.Prompt({
+          ref: bind,
+          right: api.ui.Slot({ name: "home_prompt_right" }),
+        });
+      },
+      session_prompt(_ctx, value) {
+        const sessionID = value.session_id;
+        if (typeof sessionID !== "string") return null;
+        const bind = (ref: TuiPromptRef | undefined) => {
+          if (ref) sessionPrompts.set(sessionID, ref);
+          else sessionPrompts.delete(sessionID);
+          if (typeof value.ref === "function") value.ref(ref);
+        };
+        return api.ui.Prompt({
+          sessionID,
+          visible: value.visible,
+          disabled: value.disabled,
+          onSubmit: value.on_submit,
+          ref: bind,
+          right: api.ui.Slot({ name: "session_prompt_right", session_id: sessionID }),
+        });
+      },
       sidebar_content(_ctx, value) {
         const item = indicator(value.session_id, load());
         if (!item) return null;

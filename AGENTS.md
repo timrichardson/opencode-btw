@@ -39,6 +39,14 @@ Useful extra check before release work:
 npm pack --dry-run
 ```
 
+## Compatibility Target
+
+When working on this plugin, treat `/home/tim/projects/opencode` as a read-only compatibility target.
+
+Do not edit, patch, build, regenerate, or commit anything in the OpenCode repo unless explicitly instructed. All compatibility fixes must be made in this plugin repo.
+
+Integration tests should run against the target OpenCode binary, optionally via `OPENCODE_BTW_OPENCODE_BIN=/absolute/path/to/opencode`.
+
 ## Editing Guidance
 
 - Prefer small changes in `tui.tsx`; most behavior is intentionally kept in one file.

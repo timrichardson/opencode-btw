@@ -143,6 +143,7 @@ For local OpenCode testing, point both `tui.json[c]` and `opencode.json[c]` at t
 After changing `tui.tsx`, run `bun run build` again before reopening or reloading OpenCode so the local plugin uses the updated `dist/tui.js`.
 
 `bun run test:integration` launches the real installed `opencode` TUI inside a pseudo-terminal and drives `/btw` from an isolated temporary config. Use it when developing TUI/session behavior; it is intentionally separate from `bun run test` because it depends on the local OpenCode binary and runtime environment.
+Set `OPENCODE_BTW_OPENCODE_BIN=/absolute/path/to/opencode` to run the integration suite against a specific OpenCode binary.
 
 OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 

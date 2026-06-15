@@ -173,6 +173,10 @@ export default {
           output.handled = true
           return
         }
+        if (Array.isArray(output.parts)) {
+          output.parts.length = 0
+          return
+        }
         throw new Error(commandhandled(command))
       }
       if (input.command === statusname()) {
@@ -194,14 +198,14 @@ export default {
       const tuiCommand = tuiCommands.get(input.command)
       if (tuiCommand) {
         if (!client) throw new Error("OpenCode client unavailable.")
-        const prompt = typeof input.arguments === "string" ? input.arguments.trim() : ""
+        const prompt = typeof input.arguments === "string" ? input.arguments : ""
         await logserver("command.execute.before", {
           command: input.command,
           tuiCommand,
           originSessionID: input.sessionID ?? null,
           promptLength: prompt.length,
         })
-        if (input.command === openname() && prompt) {
+        if (input.command === openname() && prompt.trim()) {
           await enter(client, input.sessionID, prompt)
           markhandled(input.command)
           return

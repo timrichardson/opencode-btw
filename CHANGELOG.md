@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.16
+
+- fix typed `/btw <prompt>` on OpenCode 1.17.7 without runtime exception flashes or origin transcript pollution
+- avoid intercepting Enter for unrelated prompt slash commands such as `/sessions`
+- add regression coverage for real TUI prompt handoff and keybinding behavior
+
 ## 0.3.15
 
 - support OpenCode command hooks that mark slash commands handled through the hook output object

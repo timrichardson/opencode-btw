@@ -6,9 +6,17 @@ import { DIAGNOSTICS_ENV, SERVER_LOG_FILE, TUI_EVENT_LOG_FILE, TUI_TOAST_LOG_FIL
 
 const RUN = process.env.OPENCODE_BTW_INTEGRATION === "1";
 const PLUGIN_ROOT = path.resolve(import.meta.dir);
+const OPENCODE_BIN = process.env.OPENCODE_BTW_OPENCODE_BIN ?? "opencode";
 const EVENT_LOG = TUI_EVENT_LOG_FILE;
 const SERVER_LOG = SERVER_LOG_FILE;
 const TOAST_LOG = TUI_TOAST_LOG_FILE;
+
+const EXCEPTION_PATTERNS = [
+  /\bERROR\s+\(#\d+\):\s+failed\s*\{/,
+  /\b(?:Error|TypeError|ReferenceError|SyntaxError|RangeError):\s+[^\n]+/,
+  /\bUnhandled(?:PromiseRejection| exception)\b/i,
+  /\bprocessTicksAndRejections\b/,
+];
 
 const roots: string[] = [];
 
@@ -35,6 +43,18 @@ function eventsSince(offset: number) {
       return [];
     }
   });
+}
+
+function shellquote(value: string) {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function stripAnsi(value: string) {
+  return value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, "");
+}
+
+function hasException(value: string) {
+  return EXCEPTION_PATTERNS.some((pattern) => pattern.test(value));
 }
 
 async function waitFor<T>(fn: () => T | Promise<T | undefined | false> | undefined | false, timeout = 10_000) {
@@ -70,28 +90,6 @@ function makeSandbox() {
   return { root, config, project, data, state, cache };
 }
 
-async function publishCommand(port: number, project: string, command: string) {
-  return publishTuiEvent(port, project, "tui.command.execute", { command });
-}
-
-async function publishTuiEvent(port: number, project: string, type: string, properties: Record<string, unknown>) {
-  const url = new URL(`http://127.0.0.1:${port}/tui/publish`);
-  url.searchParams.set("directory", project);
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      type,
-      properties,
-    }),
-  });
-  return {
-    ok: response.ok,
-    status: response.status,
-    text: await response.text().catch(() => ""),
-  };
-}
-
 async function createSession(port: number, project: string) {
   const url = new URL(`http://127.0.0.1:${port}/session`);
   url.searchParams.set("directory", project);
@@ -111,8 +109,37 @@ async function createSession(port: number, project: string) {
   }
 }
 
+async function publishCommand(port: number, project: string, command: string) {
+  const url = new URL(`http://127.0.0.1:${port}/tui/publish`);
+  url.searchParams.set("directory", project);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tui.command.execute",
+      properties: { command },
+    }),
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: await response.text().catch(() => ""),
+  };
+}
+
 async function selectSession(port: number, project: string, sessionID: string) {
-  return publishTuiEvent(port, project, "tui.session.select", { sessionID });
+  const url = new URL(`http://127.0.0.1:${port}/tui/select-session`);
+  url.searchParams.set("directory", project);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionID }),
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: await response.text().catch(() => ""),
+  };
 }
 
 async function sessionMessages(port: number, project: string, sessionID: string) {
@@ -145,7 +172,9 @@ function hasExactUserText(messages: unknown, prompt: string) {
 
 function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
   let output = "";
-  const proc = Bun.spawn(["script", "-qfec", `opencode --hostname 127.0.0.1 --port ${port}`, "/dev/null"], {
+  let exceptions = "";
+  let capturingException = false;
+  const proc = Bun.spawn(["script", "-qfec", `${shellquote(OPENCODE_BIN)} --hostname 127.0.0.1 --port ${port}`, "/dev/null"], {
     cwd: sandbox.project,
     stdin: "pipe",
     stdout: "pipe",
@@ -162,6 +191,8 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       OPENCODE_DISABLE_AUTOUPDATE: "1",
       OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
       OPENCODE_DISABLE_MODELS_FETCH: "1",
+      OPENCODE_DISABLE_MOUSE: "1",
+      OPENCODE_FAST_BOOT: "1",
       OPENCODE_SERVER_PASSWORD: "",
       [DIAGNOSTICS_ENV]: "1",
       TERM: process.env.TERM || "xterm-256color",
@@ -171,8 +202,18 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
   const collect = async (stream: ReadableStream<Uint8Array> | null) => {
     if (!stream) return;
     for await (const chunk of stream) {
-      output += new TextDecoder().decode(chunk);
+      const text = new TextDecoder().decode(chunk);
+      output += text;
       if (output.length > 20_000) output = output.slice(-20_000);
+
+      const clean = stripAnsi(output.slice(-8_000));
+      if (!capturingException && hasException(clean)) {
+        capturingException = true;
+        exceptions = clean;
+      } else if (capturingException) {
+        exceptions += stripAnsi(text);
+      }
+      if (exceptions.length > 20_000) exceptions = exceptions.slice(-20_000);
     }
   };
   collect(proc.stdout);
@@ -181,6 +222,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
   return {
     proc,
     output: () => output,
+    exceptions: () => exceptions,
     async stop() {
       proc.stdin.write("\x03");
       proc.stdin.flush?.();
@@ -232,14 +274,17 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       readSince(SERVER_LOG, serverOffset),
       "Plugin toasts:",
       toasts,
+      "Captured exceptions:",
+      tui.exceptions(),
     ].join("\n");
     expect(result, diagnostics).toBeTruthy();
     expect(result?.events, diagnostics).not.toContain("enter:error");
     expect(toasts, diagnostics).not.toContain("Request failed");
+    expect(tui.exceptions(), diagnostics).toBe("");
   } finally {
     await tui.stop();
   }
-}, 30_000);
+}, 45_000);
 
 (RUN ? test : test.skip)("/btw typed with a prompt forks and submits that exact prompt", async () => {
   const sandbox = makeSandbox();
@@ -275,7 +320,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     });
     expect(selected, `Failed to select origin session. Output:\n${tui.output()}`).toBeTruthy();
 
-    await Bun.sleep(250);
+    await Bun.sleep(1_000);
 
     tui.proc.stdin.write(`/btw ${prompt}\r`);
     tui.proc.stdin.flush?.();
@@ -284,9 +329,9 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       const events = eventsSince(eventOffset);
       const error = events.find((event) => event.stage === "enter:error");
       if (error) return { ok: false, error, events };
-      const claimed = events.find((event) => event.stage === "experimental:claimed_handoff");
+      const promptStart = events.find((event) => event.stage === "experimental:prompt:start");
       const fork = events.find((event) => event.stage === "enter:fork" && typeof event.tempSessionID === "string");
-      if (claimed && fork) return { ok: true, claimed, fork, tempSessionID: fork.tempSessionID as string, events };
+      if (promptStart && fork) return { ok: true, promptStart, fork, tempSessionID: fork.tempSessionID as string, events };
       return undefined;
     }, 15_000);
 
@@ -296,6 +341,9 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
         if (result.ok && hasExactUserText(result.messages, prompt)) return result;
         return undefined;
       }, 10_000)
+      : undefined;
+    const originMessages = origin?.sessionID
+      ? await sessionMessages(port, sandbox.project, origin.sessionID)
       : undefined;
 
     const toasts = readSince(TOAST_LOG, toastOffset);
@@ -308,17 +356,24 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       readSince(SERVER_LOG, serverOffset),
       "Plugin toasts:",
       toasts,
+      "Captured exceptions:",
+      tui.exceptions(),
       "Fork result:",
       JSON.stringify(forked),
       "Messages result:",
       JSON.stringify(prompted),
+      "Origin messages result:",
+      JSON.stringify(originMessages),
     ].join("\n");
     expect(forked, diagnostics).toBeTruthy();
     expect(forked?.ok, diagnostics).toBe(true);
-    expect(forked?.claimed?.promptLength, diagnostics).toBe(prompt.length);
+    expect(forked?.promptStart?.promptLength, diagnostics).toBe(prompt.length);
     expect(prompted, diagnostics).toBeTruthy();
+    expect(originMessages?.ok, diagnostics).toBe(true);
+    expect(originMessages?.messages, diagnostics).toEqual([]);
+    expect(tui.exceptions(), diagnostics).toBe("");
   }
   finally {
     await tui.stop();
   }
-}, 30_000);
+}, 45_000);
