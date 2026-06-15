@@ -1,15 +1,17 @@
 # opencode-bytheway
 
-OpenCode TUI plugin that adds temporary "by the way" side-session workflows.
+OpenCode plugin that adds temporary "by the way" side-session workflows.
 
 A proof-of-concept plugin to implement something like Claude Code's "btw" feature, where you can branch into a temporary side session, then discard it or merge text back into the parent session when you are done.
-`/btw` does not expect a prompt, and opens a session that you can exit with `/btw-end`.
-`/btw-prompt` can be used as `/btw-prompt tell me more about foo()`; it is experimental.
-These commands are queued like any other OpenCode command when the current session is busy.
+`/btw` opens a session that you can exit with `/btw-end`.
+`/btw your prompt here` opens the temp session and sends that prompt there without adding it to the parent transcript.
+`/btw-prompt` can also be used as `/btw-prompt tell me more about foo()`; it is experimental.
+Typed `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` commands are handled by plugin hooks instead of requiring a model call just to dispatch.
 
 
 Normal usage:
 - run `/btw` and then type in the temp session
+- run `/btw your prompt here` to open the temp session and send an initial prompt there
 
 Experimental server-side entrypoint:
 - run `/btw-prompt your prompt here` to open the temp session and hand that prompt to the TUI plugin
@@ -39,10 +41,10 @@ The installer detects that this package has both server and TUI targets and upda
 Use `--force` if you need to replace an existing pinned version:
 
 ```bash
-opencode plugin opencode-bytheway@0.3.14 --global --force
+opencode plugin opencode-bytheway@0.4.0 --global --force
 ```
 
-OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
+OpenCode 1.17.7 loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
 If installing manually instead of using `opencode plugin`, list the same package spec in both config files. If you pin or bump versions, update both files together; otherwise the server slash shims and the same-window TUI session handlers can run different plugin versions.
 
@@ -73,7 +75,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.14"]
+  "plugin": ["opencode-bytheway@0.4.0"]
 }
 ```
 
@@ -81,7 +83,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.3.14"]
+  "plugin": ["opencode-bytheway@0.4.0"]
 }
 ```
 
@@ -115,6 +117,7 @@ These logs are disabled by default.
 ## Commands
 
 - `/btw`: open a temporary btw side session in the same terminal, preserving context from the current session
+- `/btw your prompt here`: open the temporary side session and send that prompt inside the forked temp session
 - `/btw-merge`: append plain user/assistant text from the temporary session back into the original session, then close the temporary session
 - `/btw-end`: return to the original session and remove the temporary btw session without carrying text back
 - `/btw-status`: show whether the server and TUI plugin halves are loaded at the same package version
@@ -145,7 +148,7 @@ After changing `tui.tsx`, run `bun run build` again before reopening or reloadin
 `bun run test:integration` launches the real installed `opencode` TUI inside a pseudo-terminal and drives `/btw` from an isolated temporary config. Use it when developing TUI/session behavior; it is intentionally separate from `bun run test` because it depends on the local OpenCode binary and runtime environment.
 Set `OPENCODE_BTW_OPENCODE_BIN=/absolute/path/to/opencode` to run the integration suite against a specific OpenCode binary.
 
-OpenCode 1.3.x loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
+OpenCode 1.17.7 loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
 When testing locally, put the package root in `tui.json[c]` for the TUI workflow and in `opencode.json[c]` for typed slash-command dispatch, `/btw-prompt`, and `/btw-status`.
 
@@ -190,6 +193,148 @@ Suggested WebStorm workflow:
 3. In WebStorm, run `server.debug.test.ts` in Debug mode, or create a Bun run/debug configuration for `bun test ./server.debug.test.ts`.
 4. If you want to debug the broader existing suite instead, use `tui.test.tsx` and target the `opencode_bytheway_plugin_open` tests.
 
+## Changelog
+
+### 0.4.0
+
+- Built against OpenCode 1.17.7.
+- show changelog details in `README.md` so npmjs.com displays release notes
+- clarify documented `/btw <prompt>` support and plugin-hook dispatch behavior
+
+### 0.3.16
+
+- Built against OpenCode 1.17.7.
+- fix typed `/btw <prompt>` on OpenCode 1.17.7 without runtime exception flashes or origin transcript pollution
+- avoid intercepting Enter for unrelated prompt slash commands such as `/sessions`
+- add regression coverage for real TUI prompt handoff and keybinding behavior
+
+### 0.3.15
+
+- support OpenCode command hooks that mark slash commands handled through the hook output object
+
+### 0.3.14
+
+- add regression coverage that `/btw` continues to fork large source sessions without a fork guard
+
+### 0.3.13
+
+- share bytheway protocol helpers between the server and TUI plugin halves
+
+### 0.3.12
+
+- clear stale active `/btw` state from another origin session before opening a new side session
+- add opt-in diagnostics and integration coverage for typed `/btw <prompt>` handoff flow
+
+### 0.3.11
+
+- update the TUI command and session flow to work with OpenCode 1.14.48
+- add an opt-in integration test that launches a real OpenCode TUI session for `/btw` coverage
+
+### 0.3.10
+
+- align CI and release workflows with Bun 1.3.13 to match local verification
+- make command-handler tests await command completion instead of depending on scheduler timing
+
+### 0.3.9
+
+- document `opencode plugin opencode-bytheway --global` as the primary install path because it updates both server and TUI config files
+- keep manual dual-file config instructions as a fallback for users not using the plugin installer
+
+### 0.3.8
+
+- report both server and TUI plugin versions from `/btw-status` so mismatched OpenCode config entries are easier to diagnose
+- document keeping `opencode.jsonc` and `tui.jsonc` pinned to the same plugin version
+
+### 0.3.7
+
+- restore typed `/btw`, `/btw-merge`, and `/btw-end` dispatch for current OpenCode by routing server slash shims into the TUI command handlers
+- avoid duplicate slash autocomplete entries by keeping slash metadata on the server shims only
+- make `/btw-status` use the current TUI toast event path
+- resume or clear stale `/btw` state instead of refusing to open a side session after restart
+- support `/btw <prompt>` by handing the inline prompt to the new temporary session
+
+### 0.3.6
+
+- keep `/btw` and `/btw-prompt` visible on the origin session even while a temporary `/btw` session is active
+- continue to restrict `/btw-merge` and `/btw-end` to the active temp session where they actually work
+
+### 0.3.5
+
+- refine the published package metadata description to better describe the Claude Code-inspired btw workflow
+- include the plugin version in `/btw-status` output so loaded builds are easier to identify in TUI
+
+### 0.3.4
+
+- refine the published package metadata description to better describe the Claude Code-inspired btw workflow
+
+### 0.3.3
+
+- rename the remaining `/btw` slash-command family members to hyphenated forms: `/btw-merge` and `/btw-end`
+- keep command-family overrides consistent with the same hyphenated naming, such as `/aside-merge` and `/aside-end`
+
+### 0.3.2
+
+- rename the experimental server-side prompt command to `/btw-prompt`
+- route `/btw-prompt` through the existing TUI-owned `/btw` open flow so the initial prompt runs inside the forked session
+- namespace and scope prompt handoff files to the origin session to avoid cross-session collisions during local testing
+
+### 0.3.1
+
+- scope `/btw` command visibility to the current session so unrelated sessions do not incorrectly show `/btw-end`
+- handle `/btw-status` directly in the TUI with a toast instead of sending it through the agent loop
+
+### 0.3.0
+
+- add direct non-LLM dispatch for `/btw-prompt` while keeping the proven TUI handoff flow
+- remove temporary debug slash commands and trim unused server helpers
+- improve experimental runtime logging for live debugging and restore the file-based prompt handoff after the parent-linked refactor failed in the live host
+
+### 0.2.3
+
+- add direct non-LLM dispatch for `/btw-prompt` while keeping the proven TUI handoff flow
+- remove temporary debug slash commands and trim unused server helpers
+- improve experimental runtime logging for live debugging and restore the file-based prompt handoff after the parent-linked refactor failed in the live host
+
+### 0.2.2
+
+- restore `/btw` to TUI-only ownership and move the seeded server-side entrypoint to `/btw-prompt`
+
+### 0.2.1
+
+- publish the side-session-only release from the OIDC trusted publishing workflow
+
+### 0.2.0
+
+- remove `/btw_popup` and its popup-dialog runtime so the plugin focuses on temporary side sessions
+- load active bytheway sessions cleanly, keep the sidebar indicator aligned with the active temp session, and improve command-family overrides for local installs
+
+### 0.1.5
+
+- align the runtime plugin id with the published package name and add direct server-entry coverage
+- harden popup and temp-session cleanup for canceled runs and failed `/btw-end` deletes
+- add an optional `OPENCODE_BYTHEWAY_COMMAND` env var to rename the `/btw` slash-command family
+- pin Bun in CI and release workflows and document local `file://` plugin development setup
+
+### 0.1.4
+
+- publish a clean release from the planner-aligned workflow after the earlier workflow-only tags failed before matching package metadata
+
+### 0.1.2
+
+- align the standalone release workflow more closely with `opencode-planner` before the next publish attempt
+
+### 0.1.1
+
+- rename the npm package to `opencode-bytheway` so the standalone repo can publish under a clean available name
+
+### 0.1.0
+
+- add `/btw` for same-terminal temporary side sessions
+- add `/btw-end` to return to the original session and close the temp session
+- add `/btw_popup` for one-off popup questions that preserve the current screen
+- improve popup rendering, copy feedback, and streaming stability
+- publish from the standalone `opencode-btw` repository using a root package and root release workflow
+
 ## Release
 
 - CI and release publish from repo root.
@@ -209,13 +354,14 @@ npm pack --dry-run
 Release checklist:
 
 ```bash
-# update package.json version, for example 0.3.14
-# update CHANGELOG.md if needed
-git add package.json CHANGELOG.md
-git commit -m "chore: release 0.3.14"
-git tag v0.3.14
+# update package.json version, for example 0.4.0
+# update CHANGELOG.md, including the OpenCode version the plugin was built against
+# update the README.md changelog section with the same release details for npmjs.com
+git add package.json CHANGELOG.md README.md
+git commit -m "chore: release 0.4.0"
+git tag v0.4.0
 git push origin main
-git push origin v0.3.14
+git push origin v0.4.0
 ```
 
 After install, verify both plugin halves load:

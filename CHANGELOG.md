@@ -1,7 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Built against OpenCode 1.17.7.
+- show changelog details in `README.md` so npmjs.com displays release notes
+- clarify documented `/btw <prompt>` support and plugin-hook dispatch behavior
+
 ## 0.3.16
 
+- Built against OpenCode 1.17.7.
 - fix typed `/btw <prompt>` on OpenCode 1.17.7 without runtime exception flashes or origin transcript pollution
 - avoid intercepting Enter for unrelated prompt slash commands such as `/sessions`
 - add regression coverage for real TUI prompt handoff and keybinding behavior

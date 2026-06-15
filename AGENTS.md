@@ -62,6 +62,8 @@ After code changes:
 2. Run `bun run test` for behavioral changes.
 3. Confirm generated `dist/tui.js` reflects any runtime identifier or command changes.
 
+For releases, ensure `CHANGELOG.md` states the OpenCode version the plugin was built against, and copy the same release details into the `README.md` changelog section so npmjs.com displays them.
+
 ## Config Notes
 
 Example OpenCode config entry:
