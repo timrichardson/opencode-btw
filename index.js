@@ -51,7 +51,7 @@ const serialize = (value) => JSON.stringify(value, null, 2)
 const writehandoff = async (originSessionID, prompt) => {
   const payload = makeprompthandoff(originSessionID, prompt)
   const file = handofffile(originSessionID)
-  await writeFile(file, `${serialize(payload)}\n`, "utf8")
+  await writeFile(file, `${serialize(payload)}\n`, { encoding: "utf8", mode: 0o600 })
   await logserver("handoff.write", {
     file,
     originSessionID: payload.originSessionID,
@@ -62,7 +62,7 @@ const writehandoff = async (originSessionID, prompt) => {
 const writestatushandoff = async (sessionID) => {
   const payload = makestatushandoff(sessionID, packageJson.version)
   const file = statusfile(sessionID)
-  await writeFile(file, `${serialize(payload)}\n`, "utf8")
+  await writeFile(file, `${serialize(payload)}\n`, { encoding: "utf8", mode: 0o600 })
   await logserver("status_handoff.write", {
     file,
     sessionID: payload.sessionID,

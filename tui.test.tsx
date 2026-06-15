@@ -10,6 +10,13 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 const version = packageJson.version
 const handoffFile = (originSessionID = "none") => handofffile(originSessionID)
 const statusFile = (sessionID = "none") => statusfile(sessionID)
+const tempMetadata = (origin: string) => ({
+  [PLUGIN_ID]: {
+    type: "temp",
+    origin,
+    version: 1,
+  },
+})
 
 const env = () =>
   (globalThis as typeof globalThis & {
@@ -103,7 +110,6 @@ function setup(input?: {
   const toasts: Array<Record<string, unknown>> = []
   const views: any[] = []
   const nav: any[] = []
-  const reg: Array<() => any[]> = []
   const slots: any[] = []
   const keymapLayers: any[] = []
   const kv = new Map<string, unknown>()
@@ -130,7 +136,7 @@ function setup(input?: {
   const api: any = {
     command: {
       register(cb: () => any[]) {
-        reg.push(cb)
+        keymapLayers.push({ commands: cb() })
         return () => {}
       },
       trigger() {},
@@ -173,7 +179,10 @@ function setup(input?: {
     keymap: {
       registerLayer(input: unknown) {
         keymapLayers.push(input)
-        return () => {}
+        return () => {
+          const index = keymapLayers.indexOf(input)
+          if (index >= 0) keymapLayers.splice(index, 1)
+        }
       },
     },
     kv: {
@@ -217,7 +226,7 @@ function setup(input?: {
         },
         async messages(args: Record<string, unknown>) {
           calls.push("messages")
-          expectFlatParams(args, ["sessionID", "limit"], ["sessionID"])
+          expectFlatParams(args, ["sessionID"], ["sessionID"])
           if (args.sessionID !== originSessionID) return { data: input?.tempMessages ?? [] }
           if (input?.originMessages) return { data: input.originMessages }
           return {
@@ -272,9 +281,9 @@ function setup(input?: {
         },
         async list(args: Record<string, unknown>) {
           calls.push("list")
-          expectFlatParams(args, ["roots", "order", "limit"])
+          expectFlatParams(args, ["roots", "limit"])
           if (input?.listError) return { error: input.listError }
-          return { data: { items: input?.listSessions ?? [], cursor: {} } }
+          return { data: input?.listSessions ?? [] }
         },
         async fork(args: Record<string, unknown>, options?: Record<string, unknown>) {
           calls.push("fork")
@@ -289,7 +298,7 @@ function setup(input?: {
         async update(args: Record<string, unknown>) {
           calls.push("update")
           updated = args
-          expectFlatParams(args, ["sessionID", "title"], ["sessionID"])
+          expectFlatParams(args, ["sessionID", "title", "metadata"], ["sessionID"])
           if (input?.updateError) return { error: input.updateError }
           return { data: undefined }
         },
@@ -387,7 +396,14 @@ function setup(input?: {
     nav,
     prompted: () => prompted,
     rows() {
-      return reg.flatMap((cb) => cb())
+      return keymapLayers
+        .flatMap((layer) => layer?.commands ?? [])
+        .filter((row) => row?.namespace === "palette")
+        .map((row) => ({
+          ...row,
+          hidden: typeof row.hidden === "function" ? row.hidden() : row.hidden,
+          suggested: typeof row.suggested === "function" ? row.suggested() : row.suggested,
+        }))
     },
     emit(type: string, properties: Record<string, unknown>) {
       for (const handler of events.get(type) ?? []) handler({ type, properties })
@@ -909,7 +925,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(calls).toEqual(["messages", "fork", "update"])
     expect(fork()).toEqual({ sessionID: "ses_other", messageID: undefined })
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_other", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_other", temp: "ses_btw" })
   })
 
   test("clears stale active btw state and opens a new temp session", async () => {
@@ -924,7 +940,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(calls).toEqual(["get", "messages", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
   })
 
   test("creates an origin session when opening /btw from home", async () => {
@@ -937,10 +953,10 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(created()).toBeUndefined()
     expect(fork()).toEqual({ sessionID: "ses_main", messageID: undefined })
-    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
     expect(calls).toEqual(["list", "messages", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
   })
 
   test("continues into /btw when session title labeling fails", async () => {
@@ -951,10 +967,10 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
-    expect(calls).toEqual(["children", "messages", "fork", "update"])
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
+    expect(calls).toEqual(["list", "messages", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
   })
 
   test("shows an error toast when creating the origin session fails", async () => {
@@ -988,7 +1004,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(fork()).toEqual({ sessionID: "ses_main", messageID: undefined })
-    expect(calls).toEqual(["children", "messages", "fork", "update"])
+    expect(calls).toEqual(["list", "messages", "fork", "update"])
   })
 
   test("does not block large source sessions before forking", async () => {
@@ -1005,8 +1021,8 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(fork()).toEqual({ sessionID: sourceID, messageID: "msg_large_500" })
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: sourceID, temp: "ses_btw", baseCount: 501 })
-    expect(calls).toEqual(["children", "messages", "fork", "update"])
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: sourceID, temp: "ses_btw", baseMessageID: "msg_large_499" })
+    expect(calls).toEqual(["list", "messages", "fork", "update"])
     expect(toasts).toEqual([])
   })
 
@@ -1026,7 +1042,7 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, calls, kv, nav, rows, updated } = setup({
       forkError: new Error("Expected object, got null"),
       listSessions: [
-        { id: "ses_btw", title: "main", time: { updated: 2 } },
+        { id: "ses_btw", title: "main", time: { created: Date.now() + 1000, updated: Date.now() + 1000 } },
         { id: "ses_main", title: "main", time: { updated: 1 } },
       ],
     })
@@ -1036,10 +1052,10 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
-    expect(calls).toEqual(["children", "messages", "fork", "list", "update"])
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
+    expect(calls).toEqual(["list", "messages", "fork", "list", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
   })
 
   test("opens a btw side session and records origin/temp", async () => {
@@ -1049,10 +1065,10 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.open")
     await tick()
 
-    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session" })
-    expect(calls).toEqual(["children", "messages", "fork", "update"])
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
+    expect(calls).toEqual(["list", "messages", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
   })
 
   test("shows a btw entry message with exit instructions", async () => {
@@ -1090,7 +1106,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["children"])
+    expect(calls).toEqual(["list"])
     expect(nav).toEqual([])
     expect(toasts.at(-1)).toEqual({ variant: "warning", message: "No active /btw session." })
   })
@@ -1133,7 +1149,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["children", "messages", "fork", "update", "messages", "prompt", "delete"])
+    expect(calls).toEqual(["list", "messages", "fork", "update", "messages", "prompt", "delete"])
     expect(prompted()).toEqual({
       sessionID: "ses_main",
       noReply: true,
@@ -1175,7 +1191,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["children", "messages", "fork", "update", "messages", "delete"])
+    expect(calls).toEqual(["list", "messages", "fork", "update", "messages", "delete"])
     expect(prompted()).toBeUndefined()
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
@@ -1202,9 +1218,9 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["children", "messages", "fork", "update", "messages", "prompt"])
+    expect(calls).toEqual(["list", "messages", "fork", "update", "messages", "prompt"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
     expect(toasts.at(-1)).toEqual({ variant: "error", message: "prompt failed" })
   })
 
@@ -1260,7 +1276,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(kv.get("opencode-bytheway.active")).toEqual({
       origin: "ses_exp_origin_a",
       temp: "ses_btw",
-      baseCount: 2,
+      skipInitial: 2,
     })
     expect(prompted()).toEqual({
       sessionID: "ses_btw",
@@ -1298,7 +1314,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(kv.get("opencode-bytheway.active")).toEqual({
       origin: "ses_exp_origin_cleanup",
       temp: "ses_btw",
-      baseCount: 2,
+      skipInitial: 2,
     })
     expect(calls).toContain("deleteMessage")
     rmSync(handoffFile("ses_exp_origin_cleanup"), { force: true })
@@ -1337,7 +1353,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(kv.get("opencode-bytheway.active")).toEqual({
       origin: "ses_exp_origin_stale",
       temp: "ses_btw",
-      baseCount: 2,
+      skipInitial: 2,
     })
     expect(prompted()).toEqual({
       sessionID: "ses_btw",
@@ -1365,7 +1381,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_exp_origin_b", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_exp_origin_b", temp: "ses_btw" })
     expect(prompted()).toBeUndefined()
     expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
     expect(views.at(-1)?.props?.title).toBe("Entered /btw Session")
@@ -1390,7 +1406,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["children", "messages", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "messages", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
@@ -1405,7 +1421,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["children"])
+    expect(calls).toEqual(["list"])
     expect(nav).toEqual([])
     expect(kv.get("opencode-bytheway.active")).toBeUndefined()
     expect(toasts.at(-1)).toEqual({ variant: "warning", message: "No active /btw session." })
@@ -1422,12 +1438,12 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["children", "messages", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "messages", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
     ])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
     expect(toasts.at(-1)).toEqual({
       variant: "error",
       message: "Returned from /btw, but failed to delete the temp session.",
@@ -1444,12 +1460,12 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["children", "messages", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "messages", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
     ])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw", baseCount: 0 })
+    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
     expect(toasts.at(-1)).toEqual({
       variant: "error",
       message: "Returned from /btw, but failed to delete the temp session.",

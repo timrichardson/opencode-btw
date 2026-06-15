@@ -41,7 +41,7 @@ The installer detects that this package has both server and TUI targets and upda
 Use `--force` if you need to replace an existing pinned version:
 
 ```bash
-opencode plugin opencode-bytheway@0.4.0 --global --force
+opencode plugin opencode-bytheway@0.4.1 --global --force
 ```
 
 OpenCode 1.17.7 loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
@@ -75,7 +75,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.4.0"]
+  "plugin": ["opencode-bytheway@0.4.1"]
 }
 ```
 
@@ -83,7 +83,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.4.0"]
+  "plugin": ["opencode-bytheway@0.4.1"]
 }
 ```
 
@@ -194,6 +194,14 @@ Suggested WebStorm workflow:
 4. If you want to debug the broader existing suite instead, use `tui.test.tsx` and target the `opencode_bytheway_plugin_open` tests.
 
 ## Changelog
+
+### 0.4.1
+
+- Built against OpenCode 1.17.7.
+- modernize TUI slash-command registration onto the current keymap layer API
+- update session list, fork fallback, temp-session rehydration, and merge tracking for current OpenCode SDK shapes
+- tag temporary sessions with plugin metadata and harden prompt/status handoff files
+- add TypeScript typecheck coverage and update OpenCode/OpenTUI plugin dependencies
 
 ### 0.4.0
 
@@ -354,14 +362,14 @@ npm pack --dry-run
 Release checklist:
 
 ```bash
-# update package.json version, for example 0.4.0
+# update package.json version, for example x.y.z
 # update CHANGELOG.md, including the OpenCode version the plugin was built against
 # update the README.md changelog section with the same release details for npmjs.com
 git add package.json CHANGELOG.md README.md
-git commit -m "chore: release 0.4.0"
-git tag v0.4.0
+git commit -m "chore: release x.y.z"
+git tag vx.y.z
 git push origin main
-git push origin v0.4.0
+git push origin vx.y.z
 ```
 
 After install, verify both plugin halves load:

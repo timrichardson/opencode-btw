@@ -6,6 +6,10 @@
     "jsx": "preserve",
     "jsxImportSource": "@opentui/solid",
     "sourceMap": true,
-    "types": ["bun"]
-  }
+    "types": ["bun"],
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true
+  },
+  "include": ["tui.tsx", "index.js", "protocol.js", "scripts/build.ts"]
 }

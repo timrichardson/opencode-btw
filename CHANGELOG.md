@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+
+- Built against OpenCode 1.17.7.
+- modernize TUI slash-command registration onto the current keymap layer API
+- update session list, fork fallback, temp-session rehydration, and merge tracking for current OpenCode SDK shapes
+- tag temporary sessions with plugin metadata and harden prompt/status handoff files
+- add TypeScript typecheck coverage and update OpenCode/OpenTUI plugin dependencies
+
 ## 0.4.0
 
 - Built against OpenCode 1.17.7.

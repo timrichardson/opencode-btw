@@ -30,12 +30,27 @@ declare namespace JSX {
 
 type Spawn =
   | { mode: "all"; count: number; boundary?: string }
-  | { mode: "cut"; count: number; boundary: string; messageID: string };
+  | { mode: "cut"; count: number; boundary?: string; messageID: string };
 
 type Btw = {
   origin: string;
   temp: string;
+  baseMessageID?: string;
+  /** Compatibility for active state saved by older plugin versions. */
   baseCount?: number;
+  /** Used only when async prompt seeding cannot provide a concrete boundary. */
+  skipInitial?: number;
+};
+
+type SessionInfo = {
+  id: string;
+  title?: string;
+  parentID?: string;
+  metadata?: Record<string, unknown>;
+  time?: {
+    created?: number;
+    updated?: number;
+  };
 };
 
 type SessionMessage = {
@@ -43,6 +58,7 @@ type SessionMessage = {
     id: string;
     role: "user" | "assistant";
     parentID?: string;
+    finish?: string;
     time?: {
       created?: number;
       completed?: number;
@@ -81,6 +97,8 @@ const ui = {
 
 const key = ACTIVE_STATE_KEY;
 const emptyCommandTurnTolerance = 5000;
+const metadataKey = PLUGIN_ID;
+const handoffMaxAge = 5 * 60 * 1000;
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -88,10 +106,37 @@ const isbtw = (value: unknown): value is Btw => {
   if (!value || typeof value !== "object") return false;
   if (!("origin" in value) || typeof value.origin !== "string") return false;
   if (!("temp" in value) || typeof value.temp !== "string") return false;
+  if ("baseMessageID" in value && value.baseMessageID !== undefined && typeof value.baseMessageID !== "string")
+    return false;
   if ("baseCount" in value && value.baseCount !== undefined && typeof value.baseCount !== "number")
+    return false;
+  if ("skipInitial" in value && value.skipInitial !== undefined && typeof value.skipInitial !== "number")
     return false;
   return true;
 };
+
+const tempmetadata = (origin: string) => ({
+  [metadataKey]: {
+    type: "temp",
+    origin,
+    version: 1,
+  },
+});
+
+const istempmetadata = (value: unknown, origin: string) => {
+  if (!value || typeof value !== "object") return false;
+  if (!(metadataKey in value)) return false;
+  const item = value[metadataKey as keyof typeof value];
+  if (!item || typeof item !== "object") return false;
+  return "type" in item && item.type === "temp" && "origin" in item && item.origin === origin;
+};
+
+const btwstate = (origin: string, temp: string, baseMessageID?: string, extra: Partial<Btw> = {}): Btw => ({
+  origin,
+  temp,
+  ...(baseMessageID ? { baseMessageID } : {}),
+  ...extra,
+});
 
 export const indicator = (sessionID: string | undefined, state?: Btw) => {
   if (!sessionID || !state || state.temp !== sessionID) return;
@@ -172,6 +217,8 @@ const tui: TuiPlugin = async (api) => {
   let resolving: Promise<Btw | undefined> | undefined;
   let homePrompt: TuiPromptRef | undefined;
   const sessionPrompts = new Map<string, TuiPromptRef>();
+  let commanddispose: (() => void) | undefined;
+  let refreshcommands = () => {};
 
   const toast = (input: { variant?: "info" | "success" | "warning" | "error"; title?: string; message: string; duration?: number }) => {
     api.ui.toast(input);
@@ -226,6 +273,7 @@ const tui: TuiPlugin = async (api) => {
     btw = value;
     if (!api.kv.ready) return;
     api.kv.set(key, value ?? null);
+    refreshcommands();
   };
 
   const current = () => {
@@ -242,14 +290,23 @@ const tui: TuiPlugin = async (api) => {
   };
 
   const messages = async (sessionID: string): Promise<SessionMessage[]> => {
-    const list = await api.client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined);
+    const list = await api.client.session.messages({ sessionID }).catch(() => undefined);
     if (!list?.data?.length) return [];
     return list.data as SessionMessage[];
   };
 
   const sessioninfo = async (sessionID: string) => {
-    const next = await api.client.session.get({ sessionID }).catch(() => undefined);
-    return next?.data;
+    const next: any = await api.client.session.get({ sessionID }).catch(() => undefined);
+    return next?.data as SessionInfo | undefined;
+  };
+
+  const rootsessions = async (limit: number) => {
+    const list: any = await api.client.session
+      .list({ roots: true, limit })
+      .catch((err) => ({ error: err }));
+    if (list.error) throw list.error;
+    if (Array.isArray(list.data)) return list.data as SessionInfo[];
+    return (list.data?.items ?? []) as SessionInfo[];
   };
 
   const collecttext = (parts: SessionMessage["parts"]) =>
@@ -267,13 +324,12 @@ const tui: TuiPlugin = async (api) => {
     if (!sessionID) return;
 
     resolving = (async () => {
-      const children = await api.client.session.children({ sessionID }).catch(() => undefined);
-      const temp = children?.data
-        ?.filter((item) => item.title === sessiontitle() && !item.parentID)
-        .sort((a, b) => b.time.updated - a.time.updated)[0];
+      const temp = (await rootsessions(20).catch(() => []))
+        .filter((item) => istempmetadata(item.metadata, sessionID))
+        .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))[0];
       if (!temp?.id) return;
 
-      const value = { origin: sessionID, temp: temp.id };
+      const value = btwstate(sessionID, temp.id);
       save(value);
       return value;
     })().finally(() => {
@@ -290,18 +346,18 @@ const tui: TuiPlugin = async (api) => {
     if (sessionID) return { sessionID, created: false };
 
     logevent("enter:origin:list:start", {});
-    const list = await api.client.session
-      .list({ roots: true, order: "desc", limit: 1 })
+    const list: any = await api.client.session
+      .list({ roots: true, limit: 1 })
       .catch((err) => ({ error: err }));
     if (list.error) logevent("enter:origin:list:error", { error: errorinfo(list.error) });
-    const latest = list.data?.items?.[0]?.id;
+    const latest = (Array.isArray(list.data) ? list.data : list.data?.items)?.[0]?.id;
     if (typeof latest === "string") {
       logevent("enter:origin:list:success", { sessionID: latest });
       return { sessionID: latest, created: false };
     }
 
     logevent("enter:origin:create:start", {});
-    const next = await api.client.session.create().catch((err) => ({ error: err }));
+    const next: any = await api.client.session.create().catch((err) => ({ error: err }));
     if (next.error) logevent("enter:origin:create:error", { error: errorinfo(next.error) });
     if (next.error || !next.data?.id)
       throw next.error ?? new Error("Failed to create a new session.");
@@ -310,7 +366,7 @@ const tui: TuiPlugin = async (api) => {
   };
 
   const cutoff = async (sessionID: string, options?: { emptyCommandTurnSince?: number }): Promise<Spawn> => {
-    const list = await api.client.session.messages({ sessionID, limit: 1000 }).catch(() => undefined);
+    const list = await api.client.session.messages({ sessionID }).catch(() => undefined);
     if (!list?.data?.length) return { mode: "all", count: 0 };
     const stripped = options
       ? withoutemptycommandturn(list.data as SessionMessage[], options.emptyCommandTurnSince)
@@ -318,7 +374,7 @@ const tui: TuiPlugin = async (api) => {
     const items = stripped.items;
     const stopBefore = stripped.messageID;
     if (!items.length) {
-      if (stopBefore) return { mode: "cut", count: 0, boundary: stopBefore, messageID: stopBefore };
+      if (stopBefore) return { mode: "cut", count: 0, boundary: undefined, messageID: stopBefore };
       return { mode: "all", count: 0 };
     }
 
@@ -334,8 +390,9 @@ const tui: TuiPlugin = async (api) => {
     }
 
     if (last < 0) {
-      if (stopBefore) return { mode: "cut", count: items.length, boundary: stopBefore, messageID: stopBefore };
-      return { mode: "all", count: items.length };
+      const boundary = items.at(-1)?.info.id;
+      if (stopBefore) return { mode: "cut", count: items.length, boundary: boundary ?? stopBefore, messageID: stopBefore };
+      return { mode: "all", count: items.length, boundary };
     }
     const boundary = items[last].info.id;
     const next = items[last + 1]?.info.id ?? stopBefore;
@@ -343,9 +400,17 @@ const tui: TuiPlugin = async (api) => {
     return { mode: "cut", count: items.length, boundary, messageID: next };
   };
 
-  const mergetext = (items: SessionMessage[], start: number) => {
+  const mergeitems = (items: SessionMessage[], state: Btw) => {
+    if (state.baseMessageID) {
+      const index = items.findIndex((item) => item.info.id === state.baseMessageID);
+      if (index >= 0) return items.slice(index + 1 + (state.skipInitial ?? 0));
+      if (state.baseCount === undefined) return [];
+    }
+    return items.slice((state.baseCount ?? 0) + (state.skipInitial ?? 0));
+  };
+
+  const mergetext = (items: SessionMessage[]) => {
     const turns = items
-      .slice(start)
       .map((item) => {
         const text = collecttext(item.parts);
         if (!text) return;
@@ -367,6 +432,10 @@ const tui: TuiPlugin = async (api) => {
       const text = await readFile(handofffile(originSessionID), "utf8");
       const value = JSON.parse(text);
       if (!isprompthandoff(value)) return;
+      if (expired(value.time)) {
+        await clearhandoff(originSessionID);
+        return;
+      }
       return value as PromptHandoff;
     } catch {
       return;
@@ -382,6 +451,10 @@ const tui: TuiPlugin = async (api) => {
       const text = await readFile(statusfile(sessionID), "utf8");
       const value = JSON.parse(text);
       if (!isstatushandoff(value, sessionID)) return;
+      if (expired(value.time)) {
+        await clearstatushandoff(sessionID);
+        return;
+      }
       return value as StatusHandoff;
     } catch {
       return;
@@ -395,6 +468,12 @@ const tui: TuiPlugin = async (api) => {
   const handofftime = (handoff: PromptHandoff | undefined) => {
     const time = Date.parse(handoff?.time ?? "");
     return Number.isFinite(time) ? time : undefined;
+  };
+
+  const expired = (time: string | undefined) => {
+    if (!time) return false;
+    const value = Date.parse(time);
+    return Number.isFinite(value) && Date.now() - value > handoffMaxAge;
   };
 
   const emptycommandturn = (items: SessionMessage[], since?: number) => {
@@ -479,21 +558,28 @@ const tui: TuiPlugin = async (api) => {
   };
 
   const fork = async (sessionID: string, cut: Spawn) => {
+    const started = Date.now();
     const input = {
       sessionID,
       messageID: cut.mode === "cut" ? cut.messageID : undefined,
     };
-    const next = await api.client.session.fork(input, { throwOnError: true }).catch((error) => ({ error }));
+    const next: any = await api.client.session.fork(input, { throwOnError: true }).catch((error) => ({ error }));
     if (next.error || !next.data?.id) {
       if (next.error) logevent("enter:fork:error", { originSessionID: sessionID, error: errorinfo(next.error) });
 
       // Some current OpenCode builds complete the fork but return an empty body,
       // which makes the generated SDK throw while decoding the successful response.
-      const list = await api.client.session
-        .list({ roots: true, order: "desc", limit: 5 })
+      const list: any = await api.client.session
+        .list({ roots: true, limit: 5 })
         .catch((error) => ({ error }));
       if (list.error) logevent("enter:fork:fallback:list:error", { error: errorinfo(list.error) });
-      const fallback = list.data?.items?.find((item) => item.id !== sessionID && !item.parentID)?.id;
+      const items = Array.isArray(list.data) ? list.data : list.data?.items ?? [];
+      const fallback = items.find((item) => {
+        if (item.id === sessionID || item.parentID) return false;
+        if (istempmetadata(item.metadata, sessionID)) return true;
+        const created = item.time?.created ?? item.time?.updated;
+        return typeof created === "number" && created >= started - 1000;
+      })?.id;
       if (typeof fallback === "string") {
         logevent("enter:fork:fallback:list:success", { originSessionID: sessionID, sessionID: fallback });
         return fallback;
@@ -504,9 +590,12 @@ const tui: TuiPlugin = async (api) => {
     return next.data.id;
   };
 
-  const label = async (sessionID: string) => {
-    const next = await api.client.session
-      .update({ sessionID, title: sessiontitle() })
+  const label = async (sessionID: string, originSessionID: string) => {
+    const session = api.client.session as typeof api.client.session & {
+      update(args: { sessionID: string; title: string; metadata: Record<string, unknown> }): Promise<{ error?: unknown } | undefined>;
+    };
+    const next = await session
+      .update({ sessionID, title: sessiontitle(), metadata: tempmetadata(originSessionID) })
       .catch(() => undefined);
     return !next?.error;
   };
@@ -560,6 +649,7 @@ const tui: TuiPlugin = async (api) => {
         stateTemp: activeState.temp,
       });
       api.route.navigate("session", { sessionID: activeState.temp });
+      refreshcommands();
       return true;
     }
 
@@ -588,7 +678,7 @@ const tui: TuiPlugin = async (api) => {
       tempSessionID: temp,
       promptLength: experimental.prompt.length,
     });
-    const payload = {
+    const payload: { sessionID: string; parts: Array<{ type: "text"; text: string }> } = {
       sessionID: temp,
       parts: [{ type: "text", text: experimental.prompt }],
     };
@@ -602,12 +692,16 @@ const tui: TuiPlugin = async (api) => {
     if (seeded?.error) throw seeded.error;
 
     const after = promptAsync ? [] : await messages(temp);
-    const baseCount = Math.max(after.length, cut.count + 2);
-    save({ origin: sourceID, temp, baseCount });
+    const seededBoundary = after.at(-1)?.info.id;
+    const nextState = seededBoundary
+      ? btwstate(sourceID, temp, seededBoundary)
+      : btwstate(sourceID, temp, cut.boundary, { skipInitial: 2 });
+    save(nextState);
     logevent("experimental:prompted", {
       originSessionID: sourceID,
       tempSessionID: temp,
-      baseCount,
+      baseMessageID: nextState.baseMessageID ?? null,
+      skipInitial: nextState.skipInitial ?? 0,
       promptLength: experimental.prompt.length,
     });
   };
@@ -649,10 +743,11 @@ const tui: TuiPlugin = async (api) => {
     logevent("enter:cutoff", { sessionID: sourceID, mode: cut.mode, count: cut.count, boundary: cut.boundary });
     const temp = await fork(sourceID, cut);
     logevent("enter:fork", { originSessionID: sourceID, tempSessionID: temp });
-    const labeled = await label(temp);
+    const labeled = await label(temp, sourceID);
     logevent("enter:label", { originSessionID: sourceID, tempSessionID: temp, labeled });
-    save({ origin: sourceID, temp, baseCount: cut.count });
+    save(btwstate(sourceID, temp, cut.boundary));
     api.route.navigate("session", { sessionID: temp });
+    refreshcommands();
 
     if (experimental) {
       await seedexperimentalprompt(sourceID, temp, cut, experimental);
@@ -698,8 +793,7 @@ const tui: TuiPlugin = async (api) => {
 
     try {
       const temp = await messages(state.temp);
-      const baseCount = state.baseCount ?? (await messages(state.origin)).length;
-      const text = mergetext(temp, baseCount);
+      const text = mergetext(mergeitems(temp, state));
 
       if (text) {
         const next = await api.client.session.prompt({
@@ -711,6 +805,7 @@ const tui: TuiPlugin = async (api) => {
       }
 
       api.route.navigate("session", { sessionID: state.origin });
+      refreshcommands();
       let result;
       try {
         result = await api.client.session.delete({ sessionID: state.temp });
@@ -760,6 +855,7 @@ const tui: TuiPlugin = async (api) => {
     }
 
     api.route.navigate("session", { sessionID: state.origin });
+    refreshcommands();
     let result;
     try {
       result = await api.client.session.delete({ sessionID: state.temp });
@@ -922,64 +1018,85 @@ const tui: TuiPlugin = async (api) => {
     commands: ["btw.open", "btw.merge", "btw.end", "btw.status"],
     slashbase: slashbase(),
   });
-  api.command.register(() => {
+  const commandstate = () => {
     const sessionID = current();
     const tempState = currenttemp(sessionID, load());
     const active = Boolean(tempState);
     const inbtw = Boolean(indicator(sessionID, tempState));
     logdiagnostic("command.rows", { sessionID: sessionID ?? null, active, inbtw });
+    return { sessionID, active, inbtw };
+  };
 
-    return [
+  const selectcommand = (name: string, run: () => void | Promise<void>) => {
+    logdiagnostic("command.select", { command: name, sessionID: current() ?? null });
+    return run();
+  };
+
+  refreshcommands = () => {
+    commanddispose?.();
+    const state = commandstate();
+    commanddispose = api.keymap.registerLayer({
+      commands: [
       {
+        namespace: "palette",
+        name: "btw.open",
         title: "By the way",
         value: "btw.open",
+        desc: `Open a ${slash(openname())} side session in this terminal`,
         description: `Open a ${slash(openname())} side session in this terminal`,
         category: "Session",
+        slashName: openname(),
         slash: { name: openname() },
-        hidden: active,
-        onSelect: () => {
-          logdiagnostic("command.select", { command: "btw.open", sessionID: current() ?? null });
-          return enter();
-        },
+        hidden: state.active,
+        run: () => selectcommand("btw.open", () => enter()),
+        onSelect: () => selectcommand("btw.open", () => enter()),
       },
       {
+        namespace: "palette",
+        name: "btw.merge",
         title: `Merge ${slash(openname())}`,
         value: "btw.merge",
+        desc: `Append ${slash(openname())} text back to the original session and close it`,
         description: `Append ${slash(openname())} text back to the original session and close it`,
         category: "Session",
+        slashName: mergename(),
         slash: { name: mergename() },
-        hidden: !inbtw,
-        suggested: inbtw,
-        onSelect: () => {
-          logdiagnostic("command.select", { command: "btw.merge", sessionID: current() ?? null });
-          return merge();
-        },
+        hidden: !state.inbtw,
+        suggested: state.inbtw,
+        run: () => selectcommand("btw.merge", () => merge()),
+        onSelect: () => selectcommand("btw.merge", () => merge()),
       },
       {
+        namespace: "palette",
+        name: "btw.end",
         title: `End ${slash(openname())}`,
         value: "btw.end",
+        desc: `Return to the original session and close ${slash(openname())}`,
         description: `Return to the original session and close ${slash(openname())}`,
         category: "Session",
+        slashName: endname(),
         slash: { name: endname() },
-        hidden: !inbtw,
-        onSelect: () => {
-          logdiagnostic("command.select", { command: "btw.end", sessionID: current() ?? null });
-          return end();
-        },
+        hidden: !state.inbtw,
+        run: () => selectcommand("btw.end", () => end()),
+        onSelect: () => selectcommand("btw.end", () => end()),
       },
       {
+        namespace: "palette",
+        name: "btw.status",
         title: "By the way status",
         value: "btw.status",
+        desc: "Check whether the opencode-bytheway plugin is loaded",
         description: "Check whether the opencode-bytheway plugin is loaded",
         category: "Session",
+        slashName: statusname(),
         slash: { name: statusname() },
-        onSelect: () => {
-          logdiagnostic("command.select", { command: "btw.status", sessionID: current() ?? null });
-          return status();
-        },
+        run: () => selectcommand("btw.status", () => status()),
+        onSelect: () => selectcommand("btw.status", () => status()),
       },
-    ];
-  });
+      ],
+    });
+  };
+  refreshcommands();
 };
 
 const plugin: TuiPluginModule & { id: string } = {

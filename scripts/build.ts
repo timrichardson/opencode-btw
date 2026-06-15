@@ -1,4 +1,4 @@
-import { fileURLToPath } from "url"
+import { fileURLToPath, URL } from "node:url"
 import solidPlugin from "@opentui/solid/bun-plugin"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
@@ -21,6 +21,6 @@ if (!result.success) {
   process.exit(1)
 }
 
-await Bun.write(new URL("../dist/package.json", import.meta.url), '{"type":"module"}\n')
+await Bun.write(fileURLToPath(new URL("../dist/package.json", import.meta.url)), '{"type":"module"}\n')
 
 console.log(`built opencode-bytheway in ${root}`)
