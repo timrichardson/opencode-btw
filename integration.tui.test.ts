@@ -145,6 +145,39 @@ async function sessionMessages(port: number, project: string, sessionID: string)
   }
 }
 
+async function appendPrompt(port: number, project: string, sessionID: string, prompt: string) {
+  const url = new URL(`http://127.0.0.1:${port}/session/${sessionID}/message`);
+  url.searchParams.set("directory", project);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ noReply: true, parts: [{ type: "text", text: prompt }] }),
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: await response.text().catch(() => ""),
+  };
+}
+
+function textParts(messages: unknown) {
+  if (!Array.isArray(messages)) return [];
+  return messages.flatMap((message) => {
+    if (!message || typeof message !== "object") return [];
+    const parts = "parts" in message ? message.parts : undefined;
+    if (!Array.isArray(parts)) return [];
+    return parts.flatMap((part) => {
+      if (!part || typeof part !== "object") return [];
+      if (!("type" in part) || part.type !== "text" || !("text" in part) || typeof part.text !== "string") return [];
+      return [part.text];
+    });
+  });
+}
+
+function findTextContaining(messages: unknown, text: string) {
+  return textParts(messages).find((part) => part.includes(text));
+}
+
 function hasExactUserText(messages: unknown, prompt: string) {
   if (!Array.isArray(messages)) return false;
   return messages.some((message) => {
@@ -375,6 +408,110 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     expect(tui.exceptions(), diagnostics).toBe("");
   }
   finally {
+    await tui.stop();
+  }
+}, 45_000);
+
+(RUN ? test : test.skip)("/btw-merge on a bare side session excludes copied origin text", async () => {
+  const sandbox = makeSandbox();
+  const port = 46_000 + Math.floor(Math.random() * 1_000);
+  const eventOffset = bytes(EVENT_LOG);
+  const serverOffset = bytes(SERVER_LOG);
+  const toastOffset = bytes(TOAST_LOG);
+  const originOnly = `origin-only-${Date.now()}`;
+  const tempOnly = `temp-only-${Date.now()}`;
+  const tui = startOpencode(sandbox, port);
+
+  try {
+    const initialized = await waitFor(() => readSince(EVENT_LOG, eventOffset).includes("tui:init"));
+    expect(initialized, `TUI did not initialize. Output:\n${tui.output()}`).toBe(true);
+
+    const origin = await waitFor(async () => {
+      const result = await createSession(port, sandbox.project).catch((error) => ({
+        ok: false,
+        status: 0,
+        text: String(error),
+      }));
+      return result.ok && result.sessionID ? result : undefined;
+    });
+    expect(origin, `Failed to create origin session. Output:\n${tui.output()}`).toBeTruthy();
+    if (!origin?.sessionID) return;
+
+    const selected = await waitFor(async () => {
+      const result = await selectSession(port, sandbox.project, origin.sessionID).catch((error) => ({
+        ok: false,
+        status: 0,
+        text: String(error),
+      }));
+      return result.ok ? result : undefined;
+    });
+    expect(selected, `Failed to select origin session. Output:\n${tui.output()}`).toBeTruthy();
+
+    const seeded = await appendPrompt(port, sandbox.project, origin.sessionID, originOnly);
+    expect(seeded.ok, `Failed to seed origin message: ${seeded.status} ${seeded.text}`).toBe(true);
+    const originSeeded = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, origin.sessionID);
+      if (result.ok && hasExactUserText(result.messages, originOnly)) return result;
+      return undefined;
+    });
+    expect(originSeeded, `Origin seed message did not appear. Output:\n${tui.output()}`).toBeTruthy();
+
+    await Bun.sleep(1_000);
+    await typePrompt(tui.proc, "/btw\r");
+
+    const forked = await waitFor(() => {
+      const events = eventsSince(eventOffset);
+      const error = events.find((event) => event.stage === "enter:error");
+      if (error) return { ok: false, error, events };
+      const fork = events.find((event) => event.stage === "enter:fork" && typeof event.tempSessionID === "string");
+      if (fork) return { ok: true, fork, tempSessionID: fork.tempSessionID as string, events };
+      return undefined;
+    }, 15_000);
+    expect(forked?.ok, `Failed to open /btw. Events:\n${readSince(EVENT_LOG, eventOffset)}`).toBe(true);
+    if (!forked?.ok) return;
+
+    const tempSeeded = await appendPrompt(port, sandbox.project, forked.tempSessionID, tempOnly);
+    expect(tempSeeded.ok, `Failed to seed temp message: ${tempSeeded.status} ${tempSeeded.text}`).toBe(true);
+    const tempHasMessage = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, forked.tempSessionID);
+      if (result.ok && hasExactUserText(result.messages, tempOnly)) return result;
+      return undefined;
+    });
+    expect(tempHasMessage, `Temp seed message did not appear. Output:\n${tui.output()}`).toBeTruthy();
+
+    await typePrompt(tui.proc, "\r");
+    await Bun.sleep(500);
+    await typePrompt(tui.proc, "/btw-merge\r");
+
+    const merged = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, origin.sessionID);
+      if (!result.ok) return undefined;
+      const text = findTextContaining(result.messages, "Merged context from a temporary /btw session.");
+      if (text?.includes(tempOnly)) return { ...result, text };
+      return undefined;
+    }, 10_000);
+
+    const toasts = readSince(TOAST_LOG, toastOffset);
+    const diagnostics = [
+      "TUI output:",
+      tui.output(),
+      "Plugin events:",
+      readSince(EVENT_LOG, eventOffset),
+      "Server plugin events:",
+      readSince(SERVER_LOG, serverOffset),
+      "Plugin toasts:",
+      toasts,
+      "Captured exceptions:",
+      tui.exceptions(),
+      "Merged result:",
+      JSON.stringify(merged),
+    ].join("\n");
+    expect(merged, diagnostics).toBeTruthy();
+    expect(merged?.text, diagnostics).toContain(tempOnly);
+    expect(merged?.text, diagnostics).not.toContain(originOnly);
+    expect(toasts, diagnostics).not.toContain("Request failed");
+    expect(tui.exceptions(), diagnostics).toBe("");
+  } finally {
     await tui.stop();
   }
 }, 45_000);

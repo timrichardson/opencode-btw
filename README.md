@@ -117,8 +117,8 @@ These logs are disabled by default.
 
 - `/btw`: open a temporary btw side session in the same terminal, preserving context from the current session
 - `/btw your prompt here`: open the temporary side session and send that prompt inside the forked temp session
-- `/btw-merge`: append plain user/assistant text from the temporary session back into the original session, then close the temporary session
-- `/btw-end`: return to the original session and remove the temporary btw session without carrying text back
+- `/btw-merge`: append plain user/assistant text from the temporary session into the original session as it exists when merge runs, then close the temporary session
+- `/btw-end`: return to the original session as it exists now and remove the temporary btw session without carrying text back
 - `/btw-status`: show whether the TUI plugin is loaded
 - `/btw-prompt your prompt here`: experimental TUI-owned entrypoint that opens a forked temp session and sends the initial prompt there
 
@@ -126,6 +126,7 @@ These logs are disabled by default.
 
 - `/btw` is for branching off in the same terminal while keeping your main session intact
 - `/btw-merge` carries back only plain user/assistant text from the temporary session; tool calls and subagent details are omitted
+- `/btw-merge` asks for confirmation first if the original session continued while the temporary session was active
 - `/btw-end` is the clear way back when you want to discard the temporary session without merging text back
 - nested btw sessions are blocked to avoid stacked temporary contexts
 
@@ -193,6 +194,14 @@ Suggested WebStorm workflow:
 4. If you want to debug the broader existing suite instead, use `tui.test.tsx` and target the `opencode_bytheway_plugin_open` tests.
 
 ## Changelog
+
+### 0.5.1
+
+- Built against OpenCode 1.17.8.
+- Speed up bare `/btw` opens by skipping the source-message pre-scan.
+- Clarify that `/btw-end` returns to the original session as it exists at return time.
+- Ask for confirmation before `/btw-merge` when the original session advanced while the temporary session was active.
+- Add real-TUI integration coverage for bare `/btw` merge boundaries.
 
 ### 0.5.0
 

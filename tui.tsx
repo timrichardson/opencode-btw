@@ -36,7 +36,11 @@ type Spawn =
 type Btw = {
   origin: string;
   temp: string;
+  /** Origin session timestamp when the side session was opened. Used to warn on merge. */
+  originTime?: number;
   baseMessageID?: string;
+  /** Fast-path boundary for forks where copied source messages keep their original timestamps. */
+  baseTime?: number;
   /** Compatibility for active state saved by older plugin versions. */
   baseCount?: number;
   /** Used only when async prompt seeding cannot provide a concrete boundary. */
@@ -107,7 +111,11 @@ const isbtw = (value: unknown): value is Btw => {
   if (!value || typeof value !== "object") return false;
   if (!("origin" in value) || typeof value.origin !== "string") return false;
   if (!("temp" in value) || typeof value.temp !== "string") return false;
+  if ("originTime" in value && value.originTime !== undefined && typeof value.originTime !== "number")
+    return false;
   if ("baseMessageID" in value && value.baseMessageID !== undefined && typeof value.baseMessageID !== "string")
+    return false;
+  if ("baseTime" in value && value.baseTime !== undefined && typeof value.baseTime !== "number")
     return false;
   if ("baseCount" in value && value.baseCount !== undefined && typeof value.baseCount !== "number")
     return false;
@@ -143,7 +151,7 @@ export const indicator = (sessionID: string | undefined, state?: Btw) => {
   if (!sessionID || !state || state.temp !== sessionID) return;
   return {
     title: `${slash(openname())} session active`,
-    detail: `Run ${slash(endname())} to return`,
+    detail: `Run ${slash(endname())} to return to the original session as it is now`,
   };
 };
 
@@ -407,6 +415,11 @@ const tui: TuiPlugin = async (api) => {
       if (index >= 0) return items.slice(index + 1 + (state.skipInitial ?? 0));
       if (state.baseCount === undefined) return [];
     }
+    if (state.baseTime !== undefined) {
+      return items
+        .filter((item) => typeof item.info.time?.created === "number" && item.info.time.created >= state.baseTime!)
+        .slice(state.skipInitial ?? 0);
+    }
     return items.slice((state.baseCount ?? 0) + (state.skipInitial ?? 0));
   };
 
@@ -426,6 +439,32 @@ const tui: TuiPlugin = async (api) => {
       "",
       turns.join("\n\n"),
     ].join("\n");
+  };
+
+  const originadvanced = async (state: Btw) => {
+    if (state.originTime === undefined) return false;
+    const info = await sessioninfo(state.origin);
+    const updated = info?.time?.updated ?? info?.time?.created;
+    return typeof updated === "number" && updated > state.originTime;
+  };
+
+  const confirmoriginmerge = (state: Btw) => {
+    const DialogConfirm = api.ui.DialogConfirm;
+    api.ui.dialog.setSize("large");
+    api.ui.dialog.replace(() =>
+      DialogConfirm({
+        title: `Merge ${slash(openname())} into updated origin?`,
+        message:
+          `The original session continued while this ${slash(openname())} session was active. Merge into the original session as it is now?`,
+        onConfirm: () => {
+          api.ui.dialog.clear();
+          void merge(true);
+        },
+        onCancel: () => {
+          api.ui.dialog.clear();
+        },
+      }),
+    );
   };
 
   const readhandoff = async (originSessionID: string) => {
@@ -632,7 +671,7 @@ const tui: TuiPlugin = async (api) => {
       });
       toast({
         variant: "warning",
-        message: `Already inside a ${slash(openname())} session. Run ${slash(endname())} to return.`,
+        message: `Already inside a ${slash(openname())} session. Run ${slash(endname())} to return to the original session as it is now.`,
       });
       return true;
     }
@@ -671,7 +710,7 @@ const tui: TuiPlugin = async (api) => {
     return experimental;
   };
 
-  const seedexperimentalprompt = async (sourceID: string, temp: string, cut: Spawn, experimental: PromptHandoff) => {
+  const seedexperimentalprompt = async (sourceID: string, temp: string, cut: Spawn, experimental: PromptHandoff, originTime: number) => {
     if (!experimental.prompt.trim()) return;
 
     logevent("experimental:prompt:start", {
@@ -695,8 +734,8 @@ const tui: TuiPlugin = async (api) => {
     const after = promptAsync ? [] : await messages(temp);
     const seededBoundary = after.at(-1)?.info.id;
     const nextState = seededBoundary
-      ? btwstate(sourceID, temp, seededBoundary)
-      : btwstate(sourceID, temp, cut.boundary, { skipInitial: 2 });
+      ? btwstate(sourceID, temp, seededBoundary, { originTime })
+      : btwstate(sourceID, temp, cut.boundary, { originTime, skipInitial: 2 });
     save(nextState);
     logevent("experimental:prompted", {
       originSessionID: sourceID,
@@ -714,7 +753,7 @@ const tui: TuiPlugin = async (api) => {
       DialogAlert({
         title: `Entered ${slash(openname())} Session`,
         message:
-          `You are now in a temporary ${slash(openname())} session in this same terminal. Run ${slash(endname())} to return to your original session.`,
+          `You are now in a temporary ${slash(openname())} session in this same terminal. Run ${slash(endname())} to return to your original session in its current state at return time.`,
         onConfirm: () => {
           api.ui.dialog.clear();
         },
@@ -740,18 +779,27 @@ const tui: TuiPlugin = async (api) => {
       : claimed;
     const cleanupSince = handofftime(claimed);
     if (claimed) await deleteemptycommandturn(sourceID, cleanupSince);
-    const cut = await cutoff(sourceID, claimed ? { emptyCommandTurnSince: cleanupSince } : undefined);
-    logevent("enter:cutoff", { sessionID: sourceID, mode: cut.mode, count: cut.count, boundary: cut.boundary });
+    const originTime = Date.now();
+    const fastBoundary = !experimental;
+    const cut = fastBoundary
+      ? ({ mode: "all", count: 0 } as Spawn)
+      : await cutoff(sourceID, claimed ? { emptyCommandTurnSince: cleanupSince } : undefined);
+    logevent("enter:cutoff", {
+      sessionID: sourceID,
+      mode: fastBoundary ? "time" : cut.mode,
+      count: cut.count,
+      boundary: cut.boundary,
+    });
     const temp = await fork(sourceID, cut);
     logevent("enter:fork", { originSessionID: sourceID, tempSessionID: temp });
     const labeled = await label(temp, sourceID);
     logevent("enter:label", { originSessionID: sourceID, tempSessionID: temp, labeled });
-    save(btwstate(sourceID, temp, cut.boundary));
+    save(btwstate(sourceID, temp, cut.boundary, { originTime, ...(fastBoundary ? { baseTime: Date.now() } : {}) }));
     api.route.navigate("session", { sessionID: temp });
     refreshcommands();
 
     if (experimental) {
-      await seedexperimentalprompt(sourceID, temp, cut, experimental);
+      await seedexperimentalprompt(sourceID, temp, cut, experimental, originTime);
       return;
     }
 
@@ -774,7 +822,7 @@ const tui: TuiPlugin = async (api) => {
     }
   };
 
-  const merge = async () => {
+  const merge = async (confirmed = false) => {
     const state = await getstate();
     if (!state) {
       toast({
@@ -793,6 +841,11 @@ const tui: TuiPlugin = async (api) => {
     }
 
     try {
+      if (!confirmed && await originadvanced(state)) {
+        confirmoriginmerge(state);
+        return;
+      }
+
       const temp = await messages(state.temp);
       const text = mergetext(mergeitems(temp, state));
 
@@ -817,8 +870,8 @@ const tui: TuiPlugin = async (api) => {
         toast({
           variant: "error",
           message: text
-            ? `Merged back from ${slash(openname())}, but failed to delete the temp session. Run ${slash(endname())} to clean it up.`
-            : `Returned from ${slash(openname())}, but failed to delete the temp session.`,
+            ? `Merged back into the original session as it is now, but failed to delete the temp session. Run ${slash(endname())} to clean it up.`
+            : `Returned to the original session as it is now, but failed to delete the temp session.`,
         });
         return;
       }
@@ -827,8 +880,8 @@ const tui: TuiPlugin = async (api) => {
       toast({
         variant: "info",
         message: text
-          ? `Merged back from ${slash(openname())} session.`
-          : `No new text to merge. Returned from ${slash(openname())} session.`,
+          ? `Merged back into the original session as it is now.`
+          : `No new text to merge. Returned to the original session as it is now.`,
       });
     } catch (err) {
       toast({
@@ -866,14 +919,14 @@ const tui: TuiPlugin = async (api) => {
     if (result?.error) {
       toast({
         variant: "error",
-        message: `Returned from ${slash(openname())}, but failed to delete the temp session.`,
+        message: `Returned to the original session as it is now, but failed to delete the temp session.`,
       });
       return;
     }
     save(undefined);
     toast({
       variant: "info",
-      message: `Returned from ${slash(openname())} session.`,
+      message: `Returned to the original session as it is now.`,
     });
   };
 
@@ -1078,8 +1131,8 @@ const tui: TuiPlugin = async (api) => {
         name: "btw.end",
         title: `End ${slash(openname())}`,
         value: "btw.end",
-        desc: `Return to the original session and close ${slash(openname())}`,
-        description: `Return to the original session and close ${slash(openname())}`,
+        desc: `Return to the original session as it is now and close ${slash(openname())}`,
+        description: `Return to the original session as it is now and close ${slash(openname())}`,
         category: "Session",
         slashName: endname(),
         slash: { name: endname() },

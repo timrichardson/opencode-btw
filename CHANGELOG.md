@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- Built against OpenCode 1.17.8.
+- Speed up bare `/btw` opens by skipping the source-message pre-scan.
+- Clarify that `/btw-end` returns to the original session as it exists at return time.
+- Ask for confirmation before `/btw-merge` when the original session advanced while the temporary session was active.
+- Add real-TUI integration coverage for bare `/btw` merge boundaries.
+
 ## 0.5.0
 
 - Built against OpenCode 1.17.8.

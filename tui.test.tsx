@@ -18,6 +18,16 @@ const tempMetadata = (origin: string) => ({
   },
 })
 
+function expectOriginState(value: unknown, origin: string, temp = "ses_btw") {
+  expect(value).toMatchObject({ origin, temp })
+  expect(typeof (value as any)?.originTime).toBe("number")
+}
+
+function expectFastState(value: unknown, origin: string, temp = "ses_btw") {
+  expectOriginState(value, origin, temp)
+  expect(typeof (value as any)?.baseTime).toBe("number")
+}
+
 const env = () =>
   (globalThis as typeof globalThis & {
     process?: { env?: Record<string, string | undefined> }
@@ -33,7 +43,7 @@ async function select(rows: any[], value: string) {
   await cmd(rows, value).onSelect()
 }
 
-function textMessage(id: string, role: "user" | "assistant", text: string, completed?: boolean) {
+function textMessage(id: string, role: "user" | "assistant", text: string, completed?: boolean, created = 1) {
   return {
     info:
       role === "assistant"
@@ -41,13 +51,13 @@ function textMessage(id: string, role: "user" | "assistant", text: string, compl
             id,
             role,
             parentID: `${id}_parent`,
-            time: completed ? { created: 1, completed: 2 } : { created: 1 },
+            time: completed ? { created, completed: created + 1 } : { created },
             finish: completed ? "stop" : undefined,
           }
         : {
             id,
             role,
-            time: { created: 1 },
+            time: { created },
           },
     parts: [{ id: `${id}_part`, type: "text", text }],
   }
@@ -200,6 +210,7 @@ function setup(input?: {
     },
     ui: {
       DialogAlert: (props: Record<string, unknown>) => ({ type: "alert", props }),
+      DialogConfirm: (props: Record<string, unknown>) => ({ type: "confirm", props }),
       Prompt: (props: Record<string, unknown>) => ({ type: "prompt", props }),
       Slot: (props: Record<string, unknown>) => ({ type: "slot", props }),
       dialog: {
@@ -621,7 +632,7 @@ describe("opencode-bytheway tui plugin", () => {
     await rendered.renderOnce()
 
     expect(rendered.captureCharFrame()).toContain("/btw session active")
-    expect(rendered.captureCharFrame()).toContain("Run /btw-end to return")
+    expect(rendered.captureCharFrame()).toContain("Run /btw-end to return to the original session as it is now")
   })
 
   test("only shows the indicator for the active btw temp session", () => {
@@ -629,7 +640,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(indicator("ses_main", { origin: "ses_root", temp: "ses_btw" } as any)).toBeUndefined()
     expect(indicator("ses_btw", { origin: "ses_main", temp: "ses_btw" } as any)).toEqual({
       title: "/btw session active",
-      detail: "Run /btw-end to return",
+      detail: "Run /btw-end to return to the original session as it is now",
     })
     expect(sessiontitle()).toBe("/btw session")
   })
@@ -649,7 +660,7 @@ describe("opencode-bytheway tui plugin", () => {
       expect(cmd(rows(), "btw.prompt")?.slash).toEqual({ name: "btw-prompt" })
       expect(indicator("ses_btw", { origin: "ses_main", temp: "ses_btw" } as any)).toEqual({
         title: "/aside session active",
-        detail: "Run /aside-end to return",
+        detail: "Run /aside-end to return to the original session as it is now",
       })
       expect(sessiontitle()).toBe("/aside session")
 
@@ -658,7 +669,7 @@ describe("opencode-bytheway tui plugin", () => {
       await tick()
 
       expect(views.at(-1)?.props?.title).toBe("Entered /aside Session")
-      expect(views.at(-1)?.props?.message).toContain("Run /aside-end to return")
+      expect(views.at(-1)?.props?.message).toContain("Run /aside-end to return to your original session in its current state at return time")
     } finally {
       if (prev === undefined) delete env()[COMMAND_ENV]
       else env()[COMMAND_ENV] = prev
@@ -803,10 +814,10 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(calls).toEqual(["messages", "fork", "update"])
+    expect(calls).toEqual(["fork", "update"])
     expect(fork()).toEqual({ sessionID: "ses_other", messageID: undefined })
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_other", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_other")
   })
 
   test("clears stale active btw state and opens a new temp session", async () => {
@@ -819,9 +830,9 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(calls).toEqual(["get", "messages", "fork", "update"])
+    expect(calls).toEqual(["get", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
   })
 
   test("creates an origin session when opening /btw from home", async () => {
@@ -835,9 +846,9 @@ describe("opencode-bytheway tui plugin", () => {
     expect(created()).toBeUndefined()
     expect(fork()).toEqual({ sessionID: "ses_main", messageID: undefined })
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
-    expect(calls).toEqual(["list", "messages", "fork", "update"])
+    expect(calls).toEqual(["list", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
   })
 
   test("continues into /btw when session title labeling fails", async () => {
@@ -849,9 +860,9 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
-    expect(calls).toEqual(["list", "messages", "fork", "update"])
+    expect(calls).toEqual(["list", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
   })
 
   test("shows an error toast when creating the origin session fails", async () => {
@@ -865,7 +876,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(nav).toEqual([])
   })
 
-  test("forks from the last completed assistant boundary", async () => {
+  test("bare /btw skips the source message pre-scan", async () => {
     const { api, fork, rows } = setup({ sourceTail: true })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
@@ -873,7 +884,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(fork()).toEqual({ sessionID: "ses_main", messageID: "msg_tail_user" })
+    expect(fork()).toEqual({ sessionID: "ses_main", messageID: undefined })
   })
 
   test("forks the full session when no completed boundary exists", async () => {
@@ -885,7 +896,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(fork()).toEqual({ sessionID: "ses_main", messageID: undefined })
-    expect(calls).toEqual(["list", "messages", "fork", "update"])
+    expect(calls).toEqual(["list", "fork", "update"])
   })
 
   test("does not block large source sessions before forking", async () => {
@@ -900,10 +911,10 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(fork()).toEqual({ sessionID: sourceID, messageID: "msg_large_500" })
+    expect(fork()).toEqual({ sessionID: sourceID, messageID: undefined })
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: sourceID, temp: "ses_btw", baseMessageID: "msg_large_499" })
-    expect(calls).toEqual(["list", "messages", "fork", "update"])
+    expectFastState(kv.get("opencode-bytheway.active"), sourceID)
+    expect(calls).toEqual(["list", "fork", "update"])
     expect(toasts).toEqual([])
   })
 
@@ -934,9 +945,9 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
-    expect(calls).toEqual(["list", "messages", "fork", "list", "update"])
+    expect(calls).toEqual(["list", "fork", "list", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
   })
 
   test("opens a btw side session and records origin/temp", async () => {
@@ -947,9 +958,9 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
-    expect(calls).toEqual(["list", "messages", "fork", "update"])
+    expect(calls).toEqual(["list", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
   })
 
   test("shows a btw entry message with exit instructions", async () => {
@@ -962,7 +973,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(views.at(-1)?.type).toBe("alert")
     expect(views.at(-1)?.props?.title).toBe("Entered /btw Session")
-    expect(views.at(-1)?.props?.message).toContain("Run /btw-end to return")
+    expect(views.at(-1)?.props?.message).toContain("Run /btw-end to return to your original session in its current state at return time")
   })
 
   test("shows /btw-merge and /btw-end while inside an active btw session", async () => {
@@ -1011,12 +1022,13 @@ describe("opencode-bytheway tui plugin", () => {
   })
 
   test("merges btw text back into the origin session and deletes temp", async () => {
+    const created = Date.now() + 60_000
     const { api, calls, kv, nav, prompted, rows, toasts } = setup({
       tempMessages: [
-        textMessage("msg_user", "user", "keep this note"),
-        textMessage("msg_assistant", "assistant", "here is the answer", true),
+        textMessage("msg_user", "user", "keep this note", false, created),
+        textMessage("msg_assistant", "assistant", "here is the answer", true, created + 1),
         {
-          info: { id: "msg_tool", role: "assistant", parentID: "msg_user", time: { created: 3 } },
+          info: { id: "msg_tool", role: "assistant", parentID: "msg_user", time: { created: created + 2 } },
           parts: [{ id: "prt_tool", type: "tool", tool: "bash", state: { status: "completed" } }],
         },
       ],
@@ -1030,7 +1042,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["list", "messages", "fork", "update", "messages", "prompt", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt", "delete"])
     expect(prompted()).toEqual({
       sessionID: "ses_main",
       noReply: true,
@@ -1051,14 +1063,62 @@ describe("opencode-bytheway tui plugin", () => {
       { name: "session", params: { sessionID: "ses_main" } },
     ])
     expect(kv.get("opencode-bytheway.active")).toBeUndefined()
-    expect(toasts.at(-1)).toEqual({ variant: "info", message: "Merged back from /btw session." })
+    expect(toasts.at(-1)).toEqual({ variant: "info", message: "Merged back into the original session as it is now." })
+  })
+
+  test("confirms before merging when the origin session advanced", async () => {
+    const created = Date.now() + 60_000
+    const { api, calls, nav, prompted, rows, views } = setup({
+      currentSession: { id: "ses_main", title: "main", time: { updated: Date.now() + 120_000 } },
+      tempMessages: [
+        textMessage("msg_user", "user", "keep this note", false, created),
+        textMessage("msg_assistant", "assistant", "here is the answer", true, created + 1),
+      ],
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+
+    await select(rows(), "btw.merge")
+    await tick()
+
+    expect(calls).toEqual(["list", "fork", "update", "get"])
+    expect(views.at(-1)?.type).toBe("confirm")
+    expect(views.at(-1)?.props?.title).toBe("Merge /btw into updated origin?")
+    expect(views.at(-1)?.props?.message).toContain("The original session continued")
+    expect(prompted()).toBeUndefined()
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+
+    views.at(-1)?.props?.onConfirm()
+    await tick()
+
+    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt", "delete"])
+    expect(prompted()).toEqual({
+      sessionID: "ses_main",
+      noReply: true,
+      parts: [
+        {
+          type: "text",
+          text: [
+            "Merged context from a temporary /btw session.",
+            "Only plain user and assistant text is included below.",
+            "",
+            "User:\nkeep this note\n\nAssistant:\nhere is the answer",
+          ].join("\n"),
+        },
+      ],
+    })
+    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_main" } })
   })
 
   test("returns without prompting when there is no new mergeable text", async () => {
+    const created = Date.now() + 60_000
     const { api, calls, kv, nav, prompted, rows, toasts } = setup({
       tempMessages: [
         {
-          info: { id: "msg_tool", role: "assistant", parentID: "msg_user", time: { created: 1 } },
+          info: { id: "msg_tool", role: "assistant", parentID: "msg_user", time: { created } },
           parts: [{ id: "prt_tool", type: "tool", tool: "bash", state: { status: "completed" } }],
         },
       ],
@@ -1072,7 +1132,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["list", "messages", "fork", "update", "messages", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "delete"])
     expect(prompted()).toBeUndefined()
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
@@ -1081,13 +1141,14 @@ describe("opencode-bytheway tui plugin", () => {
     expect(kv.get("opencode-bytheway.active")).toBeUndefined()
     expect(toasts.at(-1)).toEqual({
       variant: "info",
-      message: "No new text to merge. Returned from /btw session.",
+      message: "No new text to merge. Returned to the original session as it is now.",
     })
   })
 
   test("keeps the active btw session when merge append fails", async () => {
+    const created = Date.now() + 60_000
     const { api, calls, kv, nav, rows, toasts } = setup({
-      tempMessages: [textMessage("msg_assistant", "assistant", "here is the answer", true)],
+      tempMessages: [textMessage("msg_assistant", "assistant", "here is the answer", true, created)],
       promptError: new Error("prompt failed"),
     })
     await plugin.tui(api, undefined, { state: "first" } as any)
@@ -1099,9 +1160,9 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["list", "messages", "fork", "update", "messages", "prompt"])
+    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
     expect(toasts.at(-1)).toEqual({ variant: "error", message: "prompt failed" })
   })
 
@@ -1115,7 +1176,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     await select(rows(), "btw.open")
     await tick()
-    expect(toasts.at(-1)?.message).toBe("Already inside a /btw session. Run /btw-end to return.")
+    expect(toasts.at(-1)?.message).toBe("Already inside a /btw session. Run /btw-end to return to the original session as it is now.")
   })
 
   test("uses the experimental handoff inside btw.open and skips the entry dialog", async () => {
@@ -1154,11 +1215,12 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(kv.get("opencode-bytheway.active")).toEqual({
+    expect(kv.get("opencode-bytheway.active")).toMatchObject({
       origin: "ses_exp_origin_a",
       temp: "ses_btw",
       skipInitial: 2,
     })
+    expectOriginState(kv.get("opencode-bytheway.active"), "ses_exp_origin_a")
     expect(prompted()).toEqual({
       sessionID: "ses_btw",
       parts: [{ type: "text", text: "tell me about the anzacs" }],
@@ -1192,11 +1254,12 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(originMessages).toEqual([])
     expect(fork()).toEqual({ sessionID: "ses_exp_origin_cleanup", messageID: undefined })
-    expect(kv.get("opencode-bytheway.active")).toEqual({
+    expect(kv.get("opencode-bytheway.active")).toMatchObject({
       origin: "ses_exp_origin_cleanup",
       temp: "ses_btw",
       skipInitial: 2,
     })
+    expectOriginState(kv.get("opencode-bytheway.active"), "ses_exp_origin_cleanup")
     expect(calls).toContain("deleteMessage")
     rmSync(handoffFile("ses_exp_origin_cleanup"), { force: true })
   })
@@ -1231,11 +1294,12 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(kv.get("opencode-bytheway.active")).toEqual({
+    expect(kv.get("opencode-bytheway.active")).toMatchObject({
       origin: "ses_exp_origin_stale",
       temp: "ses_btw",
       skipInitial: 2,
     })
+    expectOriginState(kv.get("opencode-bytheway.active"), "ses_exp_origin_stale")
     expect(prompted()).toEqual({
       sessionID: "ses_btw",
       parts: [{ type: "text", text: "this is a topic" }],
@@ -1262,7 +1326,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
     await tick()
 
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_exp_origin_b", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_exp_origin_b")
     expect(prompted()).toBeUndefined()
     expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
     expect(views.at(-1)?.props?.title).toBe("Entered /btw Session")
@@ -1287,7 +1351,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["list", "messages", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
@@ -1319,15 +1383,15 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["list", "messages", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
     ])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
     expect(toasts.at(-1)).toEqual({
       variant: "error",
-      message: "Returned from /btw, but failed to delete the temp session.",
+      message: "Returned to the original session as it is now, but failed to delete the temp session.",
     })
   })
 
@@ -1341,15 +1405,15 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["list", "messages", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
     ])
-    expect(kv.get("opencode-bytheway.active")).toEqual({ origin: "ses_main", temp: "ses_btw" })
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
     expect(toasts.at(-1)).toEqual({
       variant: "error",
-      message: "Returned from /btw, but failed to delete the temp session.",
+      message: "Returned to the original session as it is now, but failed to delete the temp session.",
     })
   })
 })
