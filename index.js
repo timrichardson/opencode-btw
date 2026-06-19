@@ -2,33 +2,13 @@ import { appendFile, writeFile } from "node:fs/promises"
 import { tool } from "@opencode-ai/plugin"
 import packageJson from "./package.json" assert { type: "json" }
 import {
-  EXPERIMENTAL_COMMAND,
   PLUGIN_ID,
   SERVER_LOG_FILE,
   SERVER_RUNTIME_MARKER,
-  commandhandled,
   diagnosticsenabled,
-  endname,
   handofffile,
   makeprompthandoff,
-  makestatushandoff,
-  mergename,
-  openname,
-  statusfile,
-  statusname,
 } from "./protocol.js"
-
-const slashcmd = (name, description) => ({
-  description,
-  template: `/${name}`,
-})
-
-const statuscmd = () => slashcmd(statusname(), "Check whether the opencode-bytheway plugin is loaded")
-
-const experimentalcmd = {
-  description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
-  template: "/btw-prompt",
-}
 
 const statustext = (sessionID) => [
   `opencode-bytheway ${packageJson.version} is loaded.`,
@@ -56,17 +36,6 @@ const writehandoff = async (originSessionID, prompt) => {
     file,
     originSessionID: payload.originSessionID,
     promptLength: prompt.length,
-  })
-}
-
-const writestatushandoff = async (sessionID) => {
-  const payload = makestatushandoff(sessionID, packageJson.version)
-  const file = statusfile(sessionID)
-  await writeFile(file, `${serialize(payload)}\n`, { encoding: "utf8", mode: 0o600 })
-  await logserver("status_handoff.write", {
-    file,
-    sessionID: payload.sessionID,
-    serverVersion: payload.serverVersion,
   })
 }
 
@@ -156,73 +125,6 @@ export default {
           return ""
         },
       }),
-    },
-    async config(cfg) {
-      cfg.command = {
-        [openname()]: slashcmd(openname(), "Open a by-the-way side session in this terminal"),
-        [mergename()]: slashcmd(mergename(), "Append by-the-way text back to the original session and close it"),
-        [endname()]: slashcmd(endname(), "Return to the original session and close by-the-way"),
-        [EXPERIMENTAL_COMMAND]: experimentalcmd,
-        [statusname()]: statuscmd(),
-        ...cfg.command,
-      }
-    },
-    "command.execute.before": async (input, output = {}) => {
-      const markhandled = (command) => {
-        if ("handled" in output) {
-          output.handled = true
-          return
-        }
-        if (Array.isArray(output.parts)) {
-          output.parts.length = 0
-          return
-        }
-        throw new Error(commandhandled(command))
-      }
-      if (input.command === statusname()) {
-        if (!client) throw new Error("OpenCode client unavailable.")
-        await logserver("command.execute.before", {
-          command: input.command,
-          originSessionID: input.sessionID ?? null,
-        })
-        await writestatushandoff(input.sessionID)
-        await triggertuicommand(client, "btw.status", "command.execute.before:show_status")
-        markhandled(input.command)
-        return
-      }
-      const tuiCommands = new Map([
-        [openname(), "btw.open"],
-        [mergename(), "btw.merge"],
-        [endname(), "btw.end"],
-      ])
-      const tuiCommand = tuiCommands.get(input.command)
-      if (tuiCommand) {
-        if (!client) throw new Error("OpenCode client unavailable.")
-        const prompt = typeof input.arguments === "string" ? input.arguments : ""
-        await logserver("command.execute.before", {
-          command: input.command,
-          tuiCommand,
-          originSessionID: input.sessionID ?? null,
-          promptLength: prompt.length,
-        })
-        if (input.command === openname() && prompt.trim()) {
-          await enter(client, input.sessionID, prompt)
-          markhandled(input.command)
-          return
-        }
-        await triggertuicommand(client, tuiCommand, "command.execute.before:trigger_tui_command")
-        markhandled(input.command)
-        return
-      }
-      if (input.command !== EXPERIMENTAL_COMMAND) return
-      if (!client) throw new Error("OpenCode client unavailable.")
-      await logserver("command.execute.before", {
-        command: input.command,
-        originSessionID: input.sessionID ?? null,
-        promptLength: typeof input.arguments === "string" ? input.arguments.length : 0,
-      })
-      await enter(client, input.sessionID, input.arguments)
-      markhandled(input.command)
     },
   }),
 }

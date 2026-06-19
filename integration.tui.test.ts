@@ -67,6 +67,14 @@ async function waitFor<T>(fn: () => T | Promise<T | undefined | false> | undefin
   return undefined;
 }
 
+async function typePrompt(proc: ReturnType<typeof Bun.spawn>, value: string, delay = 40) {
+  for (const char of value) {
+    proc.stdin.write(char);
+    proc.stdin.flush?.();
+    await Bun.sleep(delay);
+  }
+}
+
 function makeSandbox() {
   const root = mkdtempSync(path.join(os.tmpdir(), "opencode-btw-it-"));
   roots.push(root);
@@ -107,24 +115,6 @@ async function createSession(port: number, project: string) {
   } catch {
     return { ok: false, status: response.status, text };
   }
-}
-
-async function publishCommand(port: number, project: string, command: string) {
-  const url = new URL(`http://127.0.0.1:${port}/tui/publish`);
-  url.searchParams.set("directory", project);
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      type: "tui.command.execute",
-      properties: { command },
-    }),
-  });
-  return {
-    ok: response.ok,
-    status: response.status,
-    text: await response.text().catch(() => ""),
-  };
 }
 
 async function selectSession(port: number, project: string, sessionID: string) {
@@ -244,15 +234,29 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     const initialized = await waitFor(() => readSince(EVENT_LOG, eventOffset).includes("tui:init"));
     expect(initialized, `TUI did not initialize. Output:\n${tui.output()}`).toBe(true);
 
-    const published = await waitFor(async () => {
-      const result = await publishCommand(port, sandbox.project, "btw.open").catch((error) => ({
+    const origin = await waitFor(async () => {
+      const result = await createSession(port, sandbox.project).catch((error) => ({
+        ok: false,
+        status: 0,
+        text: String(error),
+      }));
+      return result.ok && result.sessionID ? result : undefined;
+    });
+    expect(origin, `Failed to create origin session. Output:\n${tui.output()}`).toBeTruthy();
+
+    const selected = await waitFor(async () => {
+      if (!origin?.sessionID) return undefined;
+      const result = await selectSession(port, sandbox.project, origin.sessionID).catch((error) => ({
         ok: false,
         status: 0,
         text: String(error),
       }));
       return result.ok ? result : undefined;
     });
-    expect(published, `Failed to publish TUI command. Output:\n${tui.output()}`).toBeTruthy();
+    expect(selected, `Failed to select origin session. Output:\n${tui.output()}`).toBeTruthy();
+
+    await Bun.sleep(1_000);
+    await typePrompt(tui.proc, "/btw\r");
 
     const result = await waitFor(() => {
       const events = readSince(EVENT_LOG, eventOffset);
@@ -266,8 +270,6 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     const diagnostics = [
       "TUI output:",
       tui.output(),
-      "Publish result:",
-      JSON.stringify(published),
       "Plugin events:",
       events,
       "Server plugin events:",
@@ -322,8 +324,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
 
     await Bun.sleep(1_000);
 
-    tui.proc.stdin.write(`/btw ${prompt}\r`);
-    tui.proc.stdin.flush?.();
+    await typePrompt(tui.proc, `/btw ${prompt}\r`);
 
     const forked = await waitFor(() => {
       const events = eventsSince(eventOffset);

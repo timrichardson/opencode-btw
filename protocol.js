@@ -36,9 +36,6 @@ export const endname = () => `${slashbase()}-end`
 export const mergename = () => `${slashbase()}-merge`
 export const statusname = () => `${slashbase()}-status`
 
-export const commandhandled = (name) =>
-  `__OPENCODE_BYTHEWAY_${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_HANDLED__`
-
 export const handoffnamespace = () => {
   const value = env()[HANDOFF_NAMESPACE_ENV]?.trim()
   if (!value) return
@@ -82,14 +79,6 @@ export const isprompthandoff = (value) =>
       (value.originSessionID === null || typeof value.originSessionID === "string") &&
       typeof value.prompt === "string",
   )
-
-export const makestatushandoff = (sessionID, serverVersion) => ({
-  type: STATUS_HANDOFF_TYPE,
-  version: STATUS_HANDOFF_VERSION,
-  sessionID: sessionID ?? null,
-  serverVersion,
-  time: new Date().toISOString(),
-})
 
 export const isstatushandoff = (value, sessionID) =>
   Boolean(

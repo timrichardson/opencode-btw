@@ -4,6 +4,7 @@ import { appendFile, readFile, unlink } from "node:fs/promises";
 import packageJson from "./package.json" with { type: "json" };
 import {
   ACTIVE_STATE_KEY,
+  EXPERIMENTAL_COMMAND,
   PLUGIN_ID,
   TUI_EVENT_LOG_FILE,
   TUI_RUNTIME_MARKER,
@@ -907,7 +908,7 @@ const tui: TuiPlugin = async (api) => {
   const isbtwpromptcommand = (input: string) => {
     const command = parsepromptcommand(input);
     if (!command) return false;
-    return [openname(), mergename(), endname(), statusname()].includes(command.name);
+    return [openname(), mergename(), endname(), statusname(), EXPERIMENTAL_COMMAND].includes(command.name);
   };
 
   const handlepromptsubmit = () => {
@@ -936,6 +937,12 @@ const tui: TuiPlugin = async (api) => {
     if (command.name === statusname()) {
       prompt.reset();
       void status();
+      return true;
+    }
+    if (command.name === EXPERIMENTAL_COMMAND) {
+      const text = command.arguments;
+      prompt.reset();
+      void enter(text.trim() ? text : undefined);
       return true;
     }
 
@@ -1015,7 +1022,7 @@ const tui: TuiPlugin = async (api) => {
   });
 
   logdiagnostic("command.register", {
-    commands: ["btw.open", "btw.merge", "btw.end", "btw.status"],
+    commands: ["btw.open", "btw.merge", "btw.end", "btw.status", "btw.prompt"],
     slashbase: slashbase(),
   });
   const commandstate = () => {
@@ -1092,6 +1099,20 @@ const tui: TuiPlugin = async (api) => {
         slash: { name: statusname() },
         run: () => selectcommand("btw.status", () => status()),
         onSelect: () => selectcommand("btw.status", () => status()),
+      },
+      {
+        namespace: "palette",
+        name: "btw.prompt",
+        title: "By the way prompt",
+        value: "btw.prompt",
+        desc: "Open a by-the-way session and send an initial prompt",
+        description: "Open a by-the-way session and send an initial prompt",
+        category: "Session",
+        slashName: EXPERIMENTAL_COMMAND,
+        slash: { name: EXPERIMENTAL_COMMAND },
+        hidden: state.active,
+        run: () => selectcommand("btw.prompt", () => enter()),
+        onSelect: () => selectcommand("btw.prompt", () => enter()),
       },
       ],
     });

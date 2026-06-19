@@ -422,11 +422,8 @@ describe("opencode-bytheway tui plugin", () => {
     expect(serverPlugin.id).toBe(PLUGIN_ID)
   })
 
-  test("registers btw_status and injects server slash commands", async () => {
+  test("registers server tools without prompt slash shims", async () => {
     const server = await serverPlugin.server()
-    const cfg = { command: { existing: { description: "keep" } } } as any
-
-    await server.config(cfg)
 
     expect(Object.keys(server.tool)).toEqual([
       "btw_status",
@@ -436,108 +433,8 @@ describe("opencode-bytheway tui plugin", () => {
     expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
       `opencode-bytheway ${version} is loaded.\nsession: ses_status`,
     )
-    expect(cfg.command["btw-prompt"]).toEqual({
-      description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
-      template: "/btw-prompt",
-    })
-    expect(cfg.command.btw).toEqual({
-      description: "Open a by-the-way side session in this terminal",
-      template: "/btw",
-    })
-    expect(cfg.command["btw-merge"]).toEqual({
-      description: "Append by-the-way text back to the original session and close it",
-      template: "/btw-merge",
-    })
-    expect(cfg.command["btw-end"]).toEqual({
-      description: "Return to the original session and close by-the-way",
-      template: "/btw-end",
-    })
-    expect(cfg.command["btw-status"]).toEqual({
-      description: "Check whether the opencode-bytheway plugin is loaded",
-      template: "/btw-status",
-    })
-    expect(cfg.command.existing).toEqual({ description: "keep" })
-  })
-
-  test("btw-status command hands server version to the TUI status handler", async () => {
-    const client: any = {
-      tui: {
-        async publish(args: Record<string, any>) {
-          expect(args).toEqual({
-            body: {
-              type: "tui.command.execute",
-              properties: { command: "btw.status" },
-            },
-          })
-          return { data: true }
-        },
-      },
-    }
-
-    rmSync(statusFile("ses_status"), { force: true })
-    const server = await serverPlugin.server({ client })
-    const hook = server["command.execute.before"]
-    const output = { handled: false, parts: [] }
-    await expect(hook?.({ command: "btw-status", sessionID: "ses_status", arguments: "" }, output)).resolves.toBeUndefined()
-    expect(output.handled).toBe(true)
-    expect(JSON.parse(readFileSync(statusFile("ses_status"), "utf8"))).toMatchObject({
-      type: "opencode-bytheway-status",
-      version: 1,
-      sessionID: "ses_status",
-      serverVersion: version,
-    })
-    rmSync(statusFile("ses_status"), { force: true })
-  })
-
-  test("server slash commands dispatch the existing TUI command handlers", async () => {
-    const published: string[] = []
-    const client: any = {
-      tui: {
-        async publish(args: Record<string, any>) {
-          published.push(args.body.properties.command)
-          return { data: true }
-        },
-      },
-    }
-
-    const server = await serverPlugin.server({ client })
-    const hook = server["command.execute.before"]
-    const output = { handled: false, parts: [] }
-
-    await expect(hook?.({ command: "btw", sessionID: "ses_main", arguments: "" }, output)).resolves.toBeUndefined()
-    await expect(hook?.({ command: "btw-merge", sessionID: "ses_btw", arguments: "" }, output)).resolves.toBeUndefined()
-    await expect(hook?.({ command: "btw-end", sessionID: "ses_btw", arguments: "" }, output)).resolves.toBeUndefined()
-    expect(output.handled).toBe(true)
-    expect(published).toEqual(["btw.open", "btw.merge", "btw.end"])
-  })
-
-  test("/btw with arguments hands the prompt to the TUI open flow", async () => {
-    rmSync(handoffFile("ses_btw_query"), { force: true })
-    const published: string[] = []
-    const client: any = {
-      tui: {
-        async publish(args: Record<string, any>) {
-          published.push(args.body.properties.command)
-          return { data: true }
-        },
-      },
-    }
-
-    const server = await serverPlugin.server({ client })
-    const hook = server["command.execute.before"]
-    const output = { handled: false, parts: [] }
-
-    await expect(hook?.({ command: "btw", sessionID: "ses_btw_query", arguments: "tell me about the anzac legend" }, output)).resolves.toBeUndefined()
-    expect(output.handled).toBe(true)
-    expect(published).toEqual(["btw.open"])
-    expect(JSON.parse(readFileSync(handoffFile("ses_btw_query"), "utf8"))).toMatchObject({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_btw_query",
-      prompt: "tell me about the anzac legend",
-    })
-    rmSync(handoffFile("ses_btw_query"), { force: true })
+    expect(server.config).toBeUndefined()
+    expect(server["command.execute.before"]).toBeUndefined()
   })
 
   test("opencode_bytheway_plugin_open tool writes the prompt handoff and triggers btw.open in the TUI", async () => {
@@ -608,37 +505,6 @@ describe("opencode-bytheway tui plugin", () => {
     rmSync(handoffFile("ses_exp_server_empty"), { force: true })
   })
 
-  test("btw-prompt command executes directly in command.execute.before", async () => {
-    rmSync(handoffFile("ses_exp_server_hook"), { force: true })
-    const client: any = {
-      tui: {
-        async publish(args: Record<string, unknown>) {
-          expect(args).toEqual({
-            body: {
-              type: "tui.command.execute",
-              properties: { command: "btw.open" },
-            },
-          })
-          return { data: true }
-        },
-      },
-    }
-
-    const server = await serverPlugin.server({ client })
-    const hook = server["command.execute.before"]
-    const output = { handled: false, parts: [] }
-    await expect(hook?.({ command: "btw-prompt", sessionID: "ses_exp_server_hook", arguments: "investigate this" }, output)).resolves.toBeUndefined()
-    expect(output.handled).toBe(true)
-    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_hook"), "utf8"))).toMatchObject({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_exp_server_hook",
-      prompt: "investigate this",
-    })
-    rmSync(handoffFile("ses_exp_server_hook"), { force: true })
-  })
-
   test("opencode_bytheway_plugin_select_temp selects the provided session", async () => {
     const client: any = {
       tui: {
@@ -657,11 +523,12 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, rows } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    expect(rows()).toHaveLength(4)
+    expect(rows()).toHaveLength(5)
     expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "btw" })
     expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "btw-merge" })
     expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "btw-end" })
     expect(cmd(rows(), "btw.status")?.slash).toEqual({ name: "btw-status" })
+    expect(cmd(rows(), "btw.prompt")?.slash).toEqual({ name: "btw-prompt" })
     expect(cmd(rows(), "btw.popup")).toBeUndefined()
   })
 
@@ -689,11 +556,48 @@ describe("opencode-bytheway tui plugin", () => {
     expect(layer.enabled()).toBe(true)
     prompt.current.input = "/btw-status"
     expect(layer.enabled()).toBe(true)
+    prompt.current.input = "/btw-prompt investigate this"
+    expect(layer.enabled()).toBe(true)
     prompt.current.input = "/help"
     expect(layer.enabled()).toBe(false)
     prompt.focused = false
     prompt.current.input = "/btw another topic"
     expect(layer.enabled()).toBe(false)
+  })
+
+  test("handles /btw-prompt as a TUI prompt command", async () => {
+    const { api, keymapLayers, nav, prompted, slot } = setup()
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    const layer = keymapLayers.find((item) => item?.bindings?.some((binding: any) => binding.key === "return"))
+    expect(layer).toBeTruthy()
+
+    let resets = 0
+    const prompt: any = {
+      focused: true,
+      current: { input: "/btw-prompt investigate this", parts: [] },
+      set() {},
+      reset() {
+        resets += 1
+        prompt.current.input = ""
+      },
+      blur() {},
+      focus() {},
+      submit() {},
+    }
+    const rendered = slot("session_prompt").slots.session_prompt({}, { session_id: "ses_main" })
+    rendered.props.ref(prompt)
+
+    expect(layer.enabled()).toBe(true)
+    expect(layer.commands[0].run()).toBe(true)
+    for (let i = 0; i < 5; i++) await tick()
+
+    expect(resets).toBe(1)
+    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
+    expect(prompted()).toEqual({
+      sessionID: "ses_btw",
+      parts: [{ type: "text", text: "investigate this" }],
+    })
   })
 
   test("registers a sidebar indicator slot", async () => {
@@ -735,37 +639,14 @@ describe("opencode-bytheway tui plugin", () => {
     env()[COMMAND_ENV] = "aside"
 
     try {
-      const server = await serverPlugin.server()
-      const cfg = { command: {} } as any
-      await server.config(cfg)
-
       const { api, rows, views } = setup()
       await plugin.tui(api, undefined, { state: "first" } as any)
 
-      expect(cfg.command["btw-prompt"]).toEqual({
-        description: "Experimental: open a temporary by-the-way session and hand its initial prompt to the TUI",
-        template: "/btw-prompt",
-      })
-      expect(cfg.command.aside).toEqual({
-        description: "Open a by-the-way side session in this terminal",
-        template: "/aside",
-      })
-      expect(cfg.command["aside-merge"]).toEqual({
-        description: "Append by-the-way text back to the original session and close it",
-        template: "/aside-merge",
-      })
-      expect(cfg.command["aside-end"]).toEqual({
-        description: "Return to the original session and close by-the-way",
-        template: "/aside-end",
-      })
-      expect(cfg.command["aside-status"]).toEqual({
-        description: "Check whether the opencode-bytheway plugin is loaded",
-        template: "/aside-status",
-      })
       expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
       expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "aside-merge" })
       expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside-end" })
       expect(cmd(rows(), "btw.status")?.slash).toEqual({ name: "aside-status" })
+      expect(cmd(rows(), "btw.prompt")?.slash).toEqual({ name: "btw-prompt" })
       expect(indicator("ses_btw", { origin: "ses_main", temp: "ses_btw" } as any)).toEqual({
         title: "/aside session active",
         detail: "Run /aside-end to return",

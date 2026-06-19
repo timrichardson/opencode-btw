@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Built against OpenCode 1.17.8.
+- Target OpenCode 1.17.8 command behavior by moving `/btw` slash dispatch fully into the TUI plugin.
+- Stop registering server prompt-command shims for the `/btw` command family, avoiding duplicate slash autocomplete entries and unsafe display-only server command handling.
+- Add real-TUI integration coverage for typed bare `/btw`.
+
 ## 0.4.1
 
 - Built against OpenCode 1.17.7.

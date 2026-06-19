@@ -6,18 +6,17 @@ A proof-of-concept plugin to implement something like Claude Code's "btw" featur
 `/btw` opens a session that you can exit with `/btw-end`.
 `/btw your prompt here` opens the temp session and sends that prompt there without adding it to the parent transcript.
 `/btw-prompt` can also be used as `/btw-prompt tell me more about foo()`; it is experimental.
-Typed `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` commands are handled by plugin hooks instead of requiring a model call just to dispatch.
+Typed `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` commands are handled by the TUI plugin instead of requiring a model call just to dispatch.
 
 
 Normal usage:
 - run `/btw` and then type in the temp session
 - run `/btw your prompt here` to open the temp session and send an initial prompt there
 
-Experimental server-side entrypoint:
+Experimental prompt entrypoint:
 - run `/btw-prompt your prompt here` to open the temp session and hand that prompt to the TUI plugin
-- the server command is handled directly in a server hook without an LLM hop
-- it writes a lightweight prompt handoff and triggers the existing TUI-owned `/btw` open flow
-- the TUI plugin claims that handoff inside `/btw`, forks the current session, switches you into the fork in the same terminal, and sends the initial prompt there without adding it to the parent transcript
+- the command is handled in the TUI without an LLM hop
+- the TUI plugin forks the current session, switches you into the fork in the same terminal, and sends the initial prompt there without adding it to the parent transcript
 
 No nesting.
 
@@ -41,17 +40,18 @@ The installer detects that this package has both server and TUI targets and upda
 Use `--force` if you need to replace an existing pinned version:
 
 ```bash
-opencode plugin opencode-bytheway@0.4.1 --global --force
+opencode plugin opencode-bytheway@0.5.0 --global --force
 ```
 
-OpenCode 1.17.7 loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
+OpenCode 1.17.8 loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-If installing manually instead of using `opencode plugin`, list the same package spec in both config files. If you pin or bump versions, update both files together; otherwise the server slash shims and the same-window TUI session handlers can run different plugin versions.
+If installing manually instead of using `opencode plugin`, list the package spec in `tui.json[c]` for slash-command support. Add the same package spec to `opencode.json[c]` only if you also want the server-side helper tools available.
 
-The two entries are both required:
-- the TUI plugin implements `/btw`, `/btw-merge`, and `/btw-end`
-- the server plugin registers slash-command shims so typed `/btw`, `/btw-merge`, and `/btw-end` submissions dispatch to those TUI handlers in current OpenCode
-- the server plugin also provides `/btw-prompt some prompt` and the `/btw-status` diagnostic command
+The plugin parts are split this way:
+- the TUI plugin implements `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt`
+- the server plugin exposes helper tools for local development and model/tool-triggered TUI handoffs
+
+For normal interactive `/btw` usage, the `opencode.json[c]` entry is no longer required; keep it only if you want the server helper tools.
 
 Example `opencode.jsonc`:
 
@@ -75,7 +75,7 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.4.1"]
+  "plugin": ["opencode-bytheway@0.5.0"]
 }
 ```
 
@@ -83,16 +83,15 @@ Optional version pin, shown in both files:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.4.1"]
+  "plugin": ["opencode-bytheway@0.5.0"]
 }
 ```
 
 Restart OpenCode after installing or updating the plugin.
 
 Troubleshooting:
-- if `/btw-status` or `/btw-prompt` appears but `/btw` does not open a side session, the package is loaded in `opencode.json[c]` but missing from `tui.json[c]`
-- if `/btw` appears only through autocomplete/direct selection but typed `/btw` submission does not work, the package is loaded in `tui.json[c]` but missing from `opencode.json[c]`
-- if `/btw-status` reports different server and TUI versions, update both config files to the same package spec and restart OpenCode
+- if `/btw` does not appear or does not open a side session, confirm the package is loaded in `tui.json[c]`
+- if server-side helper tools are unavailable, confirm the package is loaded in `opencode.json[c]`
 - reload or restart OpenCode after changing either config
 
 Optional command-family override:
@@ -102,7 +101,7 @@ OPENCODE_BYTHEWAY_COMMAND=aside
 ```
 
 With that env var set, the plugin exposes `/aside`, `/aside-merge`, `/aside-end`, and `/aside-status` instead of the default `/btw` command family.
-The experimental server-side `/btw-prompt` command stays fixed.
+The experimental `/btw-prompt` command stays fixed.
 Set the same env var for both the server and TUI plugin processes.
 
 Optional diagnostic logging:
@@ -120,8 +119,8 @@ These logs are disabled by default.
 - `/btw your prompt here`: open the temporary side session and send that prompt inside the forked temp session
 - `/btw-merge`: append plain user/assistant text from the temporary session back into the original session, then close the temporary session
 - `/btw-end`: return to the original session and remove the temporary btw session without carrying text back
-- `/btw-status`: show whether the server and TUI plugin halves are loaded at the same package version
-- `/btw-prompt your prompt here`: experimental server-side entrypoint that is dispatched directly by the server hook, writes a prompt handoff, and triggers the existing TUI-owned `/btw` open flow so the initial prompt runs inside the forked temp session
+- `/btw-status`: show whether the TUI plugin is loaded
+- `/btw-prompt your prompt here`: experimental TUI-owned entrypoint that opens a forked temp session and sends the initial prompt there
 
 ## User experience
 
@@ -148,9 +147,9 @@ After changing `tui.tsx`, run `bun run build` again before reopening or reloadin
 `bun run test:integration` launches the real installed `opencode` TUI inside a pseudo-terminal and drives `/btw` from an isolated temporary config. Use it when developing TUI/session behavior; it is intentionally separate from `bun run test` because it depends on the local OpenCode binary and runtime environment.
 Set `OPENCODE_BTW_OPENCODE_BIN=/absolute/path/to/opencode` to run the integration suite against a specific OpenCode binary.
 
-OpenCode 1.17.7 loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
+OpenCode 1.17.8 loads server plugins from `opencode.json[c]` and TUI plugins from `tui.json[c]`.
 
-When testing locally, put the package root in `tui.json[c]` for the TUI workflow and in `opencode.json[c]` for typed slash-command dispatch, `/btw-prompt`, and `/btw-status`.
+When testing locally, put the package root in `tui.json[c]` for the slash-command workflow. Add it to `opencode.json[c]` only when testing server helper tools.
 
 Example `opencode.json` entry when the repository lives at `~/projects/opencode-btw-plugin`:
 
@@ -181,8 +180,8 @@ Their absolute `file://` paths are machine-specific and should not be committed 
 
 ## Investigating `/btw-prompt`
 
-`/btw-prompt` is intercepted in `command.execute.before`, so it does not need a model call just to forward the raw command arguments.
-It writes a lightweight prompt handoff and asks the TUI to execute `btw.open`, so the initial prompt runs inside the existing fork-based `/btw` flow.
+`/btw-prompt` is intercepted by the TUI prompt layer, so it does not need a model call just to forward the raw command arguments.
+The server-side `opencode_bytheway_plugin_open` tool still writes a lightweight prompt handoff and asks the TUI to execute `btw.open`, so tool-triggered prompts use the same fork-based `/btw` flow.
 
 For same-process IDE debugging of the server tool, use the focused Bun harness in `server.debug.test.ts`.
 This harness uses a mocked prompt result so you can step through the extraction logic in `index.js` without starting OpenCode itself.
@@ -194,6 +193,13 @@ Suggested WebStorm workflow:
 4. If you want to debug the broader existing suite instead, use `tui.test.tsx` and target the `opencode_bytheway_plugin_open` tests.
 
 ## Changelog
+
+### 0.5.0
+
+- Built against OpenCode 1.17.8.
+- Target OpenCode 1.17.8 command behavior by moving `/btw` slash dispatch fully into the TUI plugin.
+- Stop registering server prompt-command shims for the `/btw` command family, avoiding duplicate slash autocomplete entries and unsafe display-only server command handling.
+- Add real-TUI integration coverage for typed bare `/btw`.
 
 ### 0.4.1
 
@@ -372,8 +378,12 @@ git push origin main
 git push origin vx.y.z
 ```
 
-After install, verify both plugin halves load:
+After install, verify the TUI plugin commands load:
 
-- server: `/btw-status`
-- TUI: `/btw`, `/btw-merge`, `/btw-end`
-- optional experimental server command: `/btw-prompt`
+- `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, `/btw-prompt`
+
+If the optional server entry is installed in `opencode.json[c]`, verify the server helper tools are available:
+
+- `btw_status`
+- `opencode_bytheway_plugin_open`
+- `opencode_bytheway_plugin_select_temp`
