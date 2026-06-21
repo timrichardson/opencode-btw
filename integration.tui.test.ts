@@ -2,13 +2,12 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DIAGNOSTICS_ENV, SERVER_LOG_FILE, TUI_EVENT_LOG_FILE, TUI_TOAST_LOG_FILE } from "./protocol.js";
+import { DIAGNOSTICS_ENV, TUI_EVENT_LOG_FILE, TUI_TOAST_LOG_FILE } from "./protocol.js";
 
 const RUN = process.env.OPENCODE_BTW_INTEGRATION === "1";
 const PLUGIN_ROOT = path.resolve(import.meta.dir);
 const OPENCODE_BIN = process.env.OPENCODE_BTW_OPENCODE_BIN ?? "opencode";
 const EVENT_LOG = TUI_EVENT_LOG_FILE;
-const SERVER_LOG = SERVER_LOG_FILE;
 const TOAST_LOG = TUI_TOAST_LOG_FILE;
 
 const EXCEPTION_PATTERNS = [
@@ -92,7 +91,6 @@ function makeSandbox() {
 
   const plugin = `file://${PLUGIN_ROOT}`;
   const json = JSON.stringify({ plugin: [plugin] }, null, 2);
-  writeFileSync(path.join(config, "opencode.jsonc"), `${json}\n`);
   writeFileSync(path.join(config, "tui.jsonc"), `${json}\n`);
 
   return { root, config, project, data, state, cache };
@@ -259,7 +257,6 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
   const sandbox = makeSandbox();
   const port = 46_000 + Math.floor(Math.random() * 1_000);
   const eventOffset = bytes(EVENT_LOG);
-  const serverOffset = bytes(SERVER_LOG);
   const toastOffset = bytes(TOAST_LOG);
   const tui = startOpencode(sandbox, port);
 
@@ -305,8 +302,6 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       tui.output(),
       "Plugin events:",
       events,
-      "Server plugin events:",
-      readSince(SERVER_LOG, serverOffset),
       "Plugin toasts:",
       toasts,
       "Captured exceptions:",
@@ -325,7 +320,6 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
   const sandbox = makeSandbox();
   const port = 46_000 + Math.floor(Math.random() * 1_000);
   const eventOffset = bytes(EVENT_LOG);
-  const serverOffset = bytes(SERVER_LOG);
   const toastOffset = bytes(TOAST_LOG);
   const prompt = "this is a topic";
   const tui = startOpencode(sandbox, port);
@@ -386,8 +380,6 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       tui.output(),
       "Plugin events:",
       readSince(EVENT_LOG, eventOffset),
-      "Server plugin events:",
-      readSince(SERVER_LOG, serverOffset),
       "Plugin toasts:",
       toasts,
       "Captured exceptions:",
@@ -416,7 +408,6 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
   const sandbox = makeSandbox();
   const port = 46_000 + Math.floor(Math.random() * 1_000);
   const eventOffset = bytes(EVENT_LOG);
-  const serverOffset = bytes(SERVER_LOG);
   const toastOffset = bytes(TOAST_LOG);
   const originOnly = `origin-only-${Date.now()}`;
   const tempOnly = `temp-only-${Date.now()}`;
@@ -497,8 +488,6 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
       tui.output(),
       "Plugin events:",
       readSince(EVENT_LOG, eventOffset),
-      "Server plugin events:",
-      readSince(SERVER_LOG, serverOffset),
       "Plugin toasts:",
       toasts,
       "Captured exceptions:",

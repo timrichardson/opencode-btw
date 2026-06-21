@@ -4,14 +4,12 @@
 
 This repository contains the standalone `opencode-bytheway` OpenCode plugin.
 
-It provides the `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` workflows for temporary side sessions through the TUI plugin. The server plugin only exposes local helper tools and tool-triggered TUI handoffs.
+It provides the `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` workflows for temporary side sessions through a TUI-only plugin.
 
 ## Important Files
 
-- `index.js`: server-side plugin entry. Defines the plugin `id`, local development tools, and tool-triggered TUI handoffs.
-- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` slash commands, session state, navigation, and prompt handoff consumption live.
+- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` slash commands, session state, and navigation live.
 - `tui.test.tsx`: Bun test coverage for the TUI behavior.
-- `server.debug.test.ts`: focused Bun harness for debugging the experimental server-side open tool in-process.
 - `scripts/build.ts`: builds `tui.tsx` into `dist/tui.js`.
 - `dist/tui.js`: built artifact published by the package. Rebuild it after changing `tui.tsx`.
 
@@ -19,7 +17,7 @@ It provides the `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-promp
 
 - Keep the runtime plugin id aligned with the published package name: `opencode-bytheway`.
 - Keep the session storage key aligned too: `opencode-bytheway.active`.
-- If either value changes in `index.js` or `tui.tsx`, update tests and rebuild `dist/tui.js` in the same change.
+- If either value changes in `protocol.js` or `tui.tsx`, update tests and rebuild `dist/tui.js` in the same change.
 - Avoid changing slash command names unless the user explicitly asks for a behavior change.
 
 ## Local Development
@@ -30,7 +28,7 @@ Use Bun for local work.
 bun install --ignore-scripts
 bun run build
 bun run test
-bun run test:server-debug
+bun run test:integration
 ```
 
 Useful extra check before release work:
@@ -66,7 +64,7 @@ For releases, ensure `CHANGELOG.md` states the OpenCode version the plugin was b
 
 ## Config Notes
 
-Example OpenCode config entry:
+Example OpenCode `tui.json[c]` entry:
 
 ```json
 {

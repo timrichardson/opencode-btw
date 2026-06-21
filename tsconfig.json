@@ -11,5 +11,5 @@
     "checkJs": false,
     "skipLibCheck": true
   },
-  "include": ["tui.tsx", "index.js", "protocol.js", "scripts/build.ts"]
+  "include": ["tui.tsx", "protocol.js", "scripts/build.ts"]
 }

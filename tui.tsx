@@ -1,6 +1,6 @@
 import { TextAttributes } from "@opentui/core";
 import type { TuiPlugin, TuiPluginModule, TuiPromptRef } from "@opencode-ai/plugin/tui";
-import { appendFile, readFile, unlink } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 import packageJson from "./package.json" with { type: "json" };
 import {
   ACTIVE_STATE_KEY,
@@ -11,14 +11,10 @@ import {
   TUI_TOAST_LOG_FILE,
   diagnosticsenabled,
   endname,
-  handofffile,
-  isprompthandoff,
-  isstatushandoff,
   mergename,
   openname,
   slash,
   slashbase,
-  statusfile,
   statusname,
 } from "./protocol.js";
 
@@ -77,21 +73,8 @@ type SessionMessage = {
   }>;
 };
 
-type StatusHandoff = {
-  type: "opencode-bytheway-status";
-  version: 1;
-  sessionID: string | null;
-  serverVersion: string;
-  time?: string;
-};
-
-type PromptHandoff = {
-  type: "experimental-btw";
-  version: 3;
-  mode: "btw.open";
-  originSessionID: string | null;
+type InitialPrompt = {
   prompt: string;
-  time?: string;
 };
 
 const ui = {
@@ -101,11 +84,7 @@ const ui = {
 };
 
 const key = ACTIVE_STATE_KEY;
-const emptyCommandTurnTolerance = 5000;
 const metadataKey = PLUGIN_ID;
-const handoffMaxAge = 5 * 60 * 1000;
-
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const isbtw = (value: unknown): value is Btw => {
   if (!value || typeof value !== "object") return false;
@@ -159,44 +138,9 @@ export const sessiontitle = () => `${slash(openname())} session`;
 
 const statustext = (sessionID: string | undefined) => [
   `opencode-bytheway ${packageJson.version} is loaded.`,
+  "mode: TUI plugin only",
   `session: ${sessionID ?? "<none>"}`,
 ].join("\n");
-
-const statusreport = (sessionID: string | undefined, handoff?: StatusHandoff) => {
-  if (!handoff) {
-    return {
-      title: "opencode-bytheway",
-      message: statustext(sessionID),
-      variant: "info" as const,
-    };
-  }
-
-  const same = handoff.serverVersion === packageJson.version;
-  if (same) {
-    return {
-      title: "opencode-bytheway",
-      message: [
-        "opencode-bytheway is loaded.",
-        `server: ${handoff.serverVersion}`,
-        `tui: ${packageJson.version}`,
-        `session: ${sessionID ?? "<none>"}`,
-      ].join("\n"),
-      variant: "info" as const,
-    };
-  }
-
-  return {
-    title: "opencode-bytheway version mismatch",
-    message: [
-      "opencode-bytheway server and TUI plugin versions differ.",
-      `server: ${handoff.serverVersion}`,
-      `tui: ${packageJson.version}`,
-      "Update both opencode.jsonc and tui.jsonc to the same package version.",
-      `session: ${sessionID ?? "<none>"}`,
-    ].join("\n"),
-    variant: "warning" as const,
-  };
-};
 
 const errorinfo = (err: unknown) => {
   if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack };
@@ -374,16 +318,11 @@ const tui: TuiPlugin = async (api) => {
     return { sessionID: next.data.id, created: true };
   };
 
-  const cutoff = async (sessionID: string, options?: { emptyCommandTurnSince?: number }): Promise<Spawn> => {
+  const cutoff = async (sessionID: string): Promise<Spawn> => {
     const list = await api.client.session.messages({ sessionID }).catch(() => undefined);
     if (!list?.data?.length) return { mode: "all", count: 0 };
-    const stripped = options
-      ? withoutemptycommandturn(list.data as SessionMessage[], options.emptyCommandTurnSince)
-      : { items: list.data as SessionMessage[] };
-    const items = stripped.items;
-    const stopBefore = stripped.messageID;
+    const items = list.data as SessionMessage[];
     if (!items.length) {
-      if (stopBefore) return { mode: "cut", count: 0, boundary: undefined, messageID: stopBefore };
       return { mode: "all", count: 0 };
     }
 
@@ -400,11 +339,10 @@ const tui: TuiPlugin = async (api) => {
 
     if (last < 0) {
       const boundary = items.at(-1)?.info.id;
-      if (stopBefore) return { mode: "cut", count: items.length, boundary: boundary ?? stopBefore, messageID: stopBefore };
       return { mode: "all", count: items.length, boundary };
     }
     const boundary = items[last].info.id;
-    const next = items[last + 1]?.info.id ?? stopBefore;
+    const next = items[last + 1]?.info.id;
     if (!next) return { mode: "all", count: items.length, boundary };
     return { mode: "cut", count: items.length, boundary, messageID: next };
   };
@@ -465,136 +403,6 @@ const tui: TuiPlugin = async (api) => {
         },
       }),
     );
-  };
-
-  const readhandoff = async (originSessionID: string) => {
-    try {
-      const text = await readFile(handofffile(originSessionID), "utf8");
-      const value = JSON.parse(text);
-      if (!isprompthandoff(value)) return;
-      if (expired(value.time)) {
-        await clearhandoff(originSessionID);
-        return;
-      }
-      return value as PromptHandoff;
-    } catch {
-      return;
-    }
-  };
-
-  const clearhandoff = async (originSessionID: string) => {
-    await unlink(handofffile(originSessionID)).catch(() => undefined);
-  };
-
-  const readstatushandoff = async (sessionID: string | undefined) => {
-    try {
-      const text = await readFile(statusfile(sessionID), "utf8");
-      const value = JSON.parse(text);
-      if (!isstatushandoff(value, sessionID)) return;
-      if (expired(value.time)) {
-        await clearstatushandoff(sessionID);
-        return;
-      }
-      return value as StatusHandoff;
-    } catch {
-      return;
-    }
-  };
-
-  const clearstatushandoff = async (sessionID: string | undefined) => {
-    await unlink(statusfile(sessionID)).catch(() => undefined);
-  };
-
-  const handofftime = (handoff: PromptHandoff | undefined) => {
-    const time = Date.parse(handoff?.time ?? "");
-    return Number.isFinite(time) ? time : undefined;
-  };
-
-  const expired = (time: string | undefined) => {
-    if (!time) return false;
-    const value = Date.parse(time);
-    return Number.isFinite(value) && Date.now() - value > handoffMaxAge;
-  };
-
-  const emptycommandturn = (items: SessionMessage[], since?: number) => {
-    if (items.length < 2) return;
-    const user = items.at(-2);
-    const assistant = items.at(-1);
-    if (!user || !assistant) return;
-    if (user.info.role !== "user") return;
-    if (assistant.info.role !== "assistant") return;
-    if (assistant.info.parentID !== user.info.id) return;
-    if (user.parts.length || assistant.parts.length) return;
-
-    const created = user.info.time?.created;
-    if (since !== undefined && created !== undefined && created < since - emptyCommandTurnTolerance)
-      return;
-
-    return { user, assistant };
-  };
-
-  const deleteemptycommandturn = async (sessionID: string, since?: number) => {
-    const client = api.client.session as typeof api.client.session & {
-      abort?: (args: { sessionID: string }) => Promise<{ error?: unknown } | undefined>;
-      deleteMessage?: (args: { sessionID: string; messageID: string }) => Promise<{ error?: unknown } | undefined>;
-    };
-    if (typeof client.deleteMessage !== "function") {
-      logevent("experimental:cleanup:unavailable", { originSessionID: sessionID });
-      return false;
-    }
-
-    let aborted = false;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const turn = emptycommandturn(await messages(sessionID), since);
-      if (!turn) {
-        await delay(25);
-        continue;
-      }
-
-      const remove = async (messageID: string) => {
-        const result = await client.deleteMessage!({ sessionID, messageID }).catch((error) => ({ error }));
-        if (result?.error) {
-          logevent("experimental:cleanup:delete_error", {
-            originSessionID: sessionID,
-            messageID,
-            attempt,
-            error: errorinfo(result.error),
-          });
-          return false;
-        }
-        return true;
-      };
-
-      const removedAssistant = await remove(turn.assistant.info.id);
-      const removedUser = removedAssistant ? await remove(turn.user.info.id) : false;
-      if (removedAssistant && removedUser) {
-        logevent("experimental:cleanup:deleted", {
-          originSessionID: sessionID,
-          userMessageID: turn.user.info.id,
-          assistantMessageID: turn.assistant.info.id,
-          attempt,
-        });
-        return true;
-      }
-
-      if (!aborted && typeof client.abort === "function") {
-        aborted = true;
-        const result = await client.abort({ sessionID }).catch((error) => ({ error }));
-        logevent(result?.error ? "experimental:cleanup:abort_error" : "experimental:cleanup:aborted", {
-          originSessionID: sessionID,
-          error: result?.error ? errorinfo(result.error) : undefined,
-        });
-      }
-      await delay(25);
-    }
-
-    logevent("experimental:cleanup:miss", { originSessionID: sessionID });
-    return false;
-  };
-
-  const withoutemptycommandturn = (items: SessionMessage[], since?: number) => {
-    const turn = emptycommandturn(items, since);
-    return turn ? { items: items.slice(0, -2), messageID: turn.user.info.id } : { items };
   };
 
   const fork = async (sessionID: string, cut: Spawn) => {
@@ -697,30 +505,17 @@ const tui: TuiPlugin = async (api) => {
     return false;
   };
 
-  const claimexperimentalhandoff = async (sourceID: string) => {
-    const handoff = await readhandoff(sourceID);
-    const experimental = handoff && handoff.originSessionID === sourceID ? handoff : undefined;
-    if (!experimental) return;
-
-    await clearhandoff(sourceID);
-    logevent("experimental:claimed_handoff", {
-      originSessionID: sourceID,
-      promptLength: experimental.prompt.length,
-    });
-    return experimental;
-  };
-
-  const seedexperimentalprompt = async (sourceID: string, temp: string, cut: Spawn, experimental: PromptHandoff, originTime: number) => {
-    if (!experimental.prompt.trim()) return;
+  const seedinitialprompt = async (sourceID: string, temp: string, cut: Spawn, initial: InitialPrompt, originTime: number) => {
+    if (!initial.prompt.trim()) return;
 
     logevent("experimental:prompt:start", {
       originSessionID: sourceID,
       tempSessionID: temp,
-      promptLength: experimental.prompt.length,
+      promptLength: initial.prompt.length,
     });
     const payload: { sessionID: string; parts: Array<{ type: "text"; text: string }> } = {
       sessionID: temp,
-      parts: [{ type: "text", text: experimental.prompt }],
+      parts: [{ type: "text", text: initial.prompt }],
     };
 
     const promptAsync = "promptAsync" in api.client.session && typeof api.client.session.promptAsync === "function"
@@ -742,7 +537,7 @@ const tui: TuiPlugin = async (api) => {
       tempSessionID: temp,
       baseMessageID: nextState.baseMessageID ?? null,
       skipInitial: nextState.skipInitial ?? 0,
-      promptLength: experimental.prompt.length,
+      promptLength: initial.prompt.length,
     });
   };
 
@@ -767,23 +562,10 @@ const tui: TuiPlugin = async (api) => {
     const sourceID = source.sessionID;
     logevent("enter:origin", { sessionID: sourceID, created: source.created });
 
-    const claimed = directPrompt === undefined ? await claimexperimentalhandoff(sourceID) : undefined;
-    const experimental = directPrompt !== undefined
-      ? {
-          type: "experimental-btw" as const,
-          version: 3 as const,
-          mode: "btw.open" as const,
-          originSessionID: sourceID,
-          prompt: directPrompt,
-        }
-      : claimed;
-    const cleanupSince = handofftime(claimed);
-    if (claimed) await deleteemptycommandturn(sourceID, cleanupSince);
+    const initial = directPrompt !== undefined ? { prompt: directPrompt } : undefined;
     const originTime = Date.now();
-    const fastBoundary = !experimental;
-    const cut = fastBoundary
-      ? ({ mode: "all", count: 0 } as Spawn)
-      : await cutoff(sourceID, claimed ? { emptyCommandTurnSince: cleanupSince } : undefined);
+    const fastBoundary = !initial;
+    const cut = fastBoundary ? ({ mode: "all", count: 0 } as Spawn) : await cutoff(sourceID);
     logevent("enter:cutoff", {
       sessionID: sourceID,
       mode: fastBoundary ? "time" : cut.mode,
@@ -798,8 +580,8 @@ const tui: TuiPlugin = async (api) => {
     api.route.navigate("session", { sessionID: temp });
     refreshcommands();
 
-    if (experimental) {
-      await seedexperimentalprompt(sourceID, temp, cut, experimental, originTime);
+    if (initial) {
+      await seedinitialprompt(sourceID, temp, cut, initial, originTime);
       return;
     }
 
@@ -932,13 +714,10 @@ const tui: TuiPlugin = async (api) => {
 
   const status = async () => {
     const sessionID = current();
-    const handoff = await readstatushandoff(sessionID);
-    if (handoff) await clearstatushandoff(sessionID);
-    const report = statusreport(sessionID, handoff);
     toast({
-      title: report.title,
-      message: report.message,
-      variant: report.variant,
+      title: "opencode-bytheway",
+      message: statustext(sessionID),
+      variant: "info",
       duration: 6000,
     });
   };
@@ -970,6 +749,11 @@ const tui: TuiPlugin = async (api) => {
 
     const command = parsepromptcommand(prompt.current.input);
     if (!command) return false;
+    logdiagnostic("prompt.submit", {
+      command: command.name,
+      argumentLength: command.arguments.length,
+      sessionID: current() ?? null,
+    });
 
     if (command.name === openname()) {
       const text = command.arguments;
@@ -1003,6 +787,7 @@ const tui: TuiPlugin = async (api) => {
   };
 
   api.keymap?.registerLayer?.({
+    mode: "base",
     priority: 1000,
     enabled: () => {
       const prompt = activeprompt();
@@ -1075,7 +860,7 @@ const tui: TuiPlugin = async (api) => {
   });
 
   logdiagnostic("command.register", {
-    commands: ["btw.open", "btw.merge", "btw.end", "btw.status", "btw.prompt"],
+    commands: [openname(), mergename(), endname(), statusname(), EXPERIMENTAL_COMMAND],
     slashbase: slashbase(),
   });
   const commandstate = () => {
@@ -1087,35 +872,42 @@ const tui: TuiPlugin = async (api) => {
     return { sessionID, active, inbtw };
   };
 
-  const selectcommand = (name: string, run: () => void | Promise<void>) => {
-    logdiagnostic("command.select", { command: name, sessionID: current() ?? null });
+  const selectcommand = (name: string, source: string, run: () => void | Promise<void>) => {
+    const state = load();
+    logdiagnostic("command.select", {
+      command: name,
+      source,
+      sessionID: current() ?? null,
+      stateOrigin: state?.origin ?? null,
+      stateTemp: state?.temp ?? null,
+      inBtw: Boolean(currenttemp(current(), state)),
+    });
     return run();
   };
 
   refreshcommands = () => {
     commanddispose?.();
     const state = commandstate();
-    commanddispose = api.keymap.registerLayer({
-      commands: [
+    const commands = [
       {
         namespace: "palette",
-        name: "btw.open",
+        name: openname(),
         title: "By the way",
-        value: "btw.open",
+        btwCommand: "btw.open",
         desc: `Open a ${slash(openname())} side session in this terminal`,
         description: `Open a ${slash(openname())} side session in this terminal`,
         category: "Session",
         slashName: openname(),
         slash: { name: openname() },
         hidden: state.active,
-        run: () => selectcommand("btw.open", () => enter()),
-        onSelect: () => selectcommand("btw.open", () => enter()),
+        run: () => selectcommand(openname(), "run", () => enter()),
+        onSelect: () => selectcommand(openname(), "onSelect", () => enter()),
       },
       {
         namespace: "palette",
-        name: "btw.merge",
+        name: mergename(),
         title: `Merge ${slash(openname())}`,
-        value: "btw.merge",
+        btwCommand: "btw.merge",
         desc: `Append ${slash(openname())} text back to the original session and close it`,
         description: `Append ${slash(openname())} text back to the original session and close it`,
         category: "Session",
@@ -1123,52 +915,80 @@ const tui: TuiPlugin = async (api) => {
         slash: { name: mergename() },
         hidden: !state.inbtw,
         suggested: state.inbtw,
-        run: () => selectcommand("btw.merge", () => merge()),
-        onSelect: () => selectcommand("btw.merge", () => merge()),
+        run: () => selectcommand(mergename(), "run", () => merge()),
+        onSelect: () => selectcommand(mergename(), "onSelect", () => merge()),
       },
       {
         namespace: "palette",
-        name: "btw.end",
+        name: endname(),
         title: `End ${slash(openname())}`,
-        value: "btw.end",
+        btwCommand: "btw.end",
         desc: `Return to the original session as it is now and close ${slash(openname())}`,
         description: `Return to the original session as it is now and close ${slash(openname())}`,
         category: "Session",
         slashName: endname(),
         slash: { name: endname() },
         hidden: !state.inbtw,
-        run: () => selectcommand("btw.end", () => end()),
-        onSelect: () => selectcommand("btw.end", () => end()),
+        run: () => selectcommand(endname(), "run", () => end()),
+        onSelect: () => selectcommand(endname(), "onSelect", () => end()),
       },
       {
         namespace: "palette",
-        name: "btw.status",
+        name: statusname(),
         title: "By the way status",
-        value: "btw.status",
+        btwCommand: "btw.status",
         desc: "Check whether the opencode-bytheway plugin is loaded",
         description: "Check whether the opencode-bytheway plugin is loaded",
         category: "Session",
         slashName: statusname(),
         slash: { name: statusname() },
-        run: () => selectcommand("btw.status", () => status()),
-        onSelect: () => selectcommand("btw.status", () => status()),
+        run: () => selectcommand(statusname(), "run", () => status()),
+        onSelect: () => selectcommand(statusname(), "onSelect", () => status()),
       },
       {
         namespace: "palette",
-        name: "btw.prompt",
+        name: EXPERIMENTAL_COMMAND,
         title: "By the way prompt",
-        value: "btw.prompt",
+        btwCommand: "btw.prompt",
         desc: "Open a by-the-way session and send an initial prompt",
         description: "Open a by-the-way session and send an initial prompt",
         category: "Session",
         slashName: EXPERIMENTAL_COMMAND,
         slash: { name: EXPERIMENTAL_COMMAND },
         hidden: state.active,
-        run: () => selectcommand("btw.prompt", () => enter()),
-        onSelect: () => selectcommand("btw.prompt", () => enter()),
+        run: () => selectcommand(EXPERIMENTAL_COMMAND, "run", () => enter()),
+        onSelect: () => selectcommand(EXPERIMENTAL_COMMAND, "onSelect", () => enter()),
       },
-      ],
+      {
+        name: "btw.open",
+        hidden: true,
+        run: () => selectcommand("btw.open", "legacy-run", () => enter()),
+      },
+      {
+        name: "btw.merge",
+        hidden: true,
+        run: () => selectcommand("btw.merge", "legacy-run", () => merge()),
+      },
+      {
+        name: "btw.end",
+        hidden: true,
+        run: () => selectcommand("btw.end", "legacy-run", () => end()),
+      },
+      {
+        name: "btw.status",
+        hidden: true,
+        run: () => selectcommand("btw.status", "legacy-run", () => status()),
+      },
+    ];
+    logdiagnostic("command.register_rows", {
+      rows: commands.map((command) => ({
+        name: command.name,
+        btwCommand: "btwCommand" in command ? command.btwCommand : null,
+        slashName: "slashName" in command ? command.slashName : null,
+        hidden: typeof command.hidden === "boolean" ? command.hidden : null,
+      })),
     });
+    commanddispose = api.keymap.registerLayer({ commands });
   };
   refreshcommands();
 };

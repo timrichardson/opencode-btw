@@ -18,10 +18,9 @@
   "license": "MIT",
   "type": "module",
   "packageManager": "bun@1.3.13",
-  "main": "./index.js",
+  "main": "./dist/tui.js",
   "exports": {
-    ".": "./index.js",
-    "./server": "./index.js",
+    ".": "./dist/tui.js",
     "./tui": "./dist/tui.js"
   },
   "oc-plugin": [
@@ -29,8 +28,6 @@
   ],
   "files": [
     "dist",
-    "index.js",
-    "protocol.js",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -38,13 +35,12 @@
   "scripts": {
     "build": "bun ./scripts/build.ts",
     "typecheck": "tsc --noEmit",
-    "test:server-debug": "bun test ./server.debug.test.ts",
     "test:integration": "OPENCODE_BTW_INTEGRATION=1 bun test ./integration.tui.test.ts",
     "test": "NODE_ENV=production bun test --preload @opentui/solid/runtime-plugin-support --conditions=browser ./tui.test.tsx",
     "prepublishOnly": "bun run typecheck && bun run build && bun run test"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.17.8",
+    "@opencode-ai/plugin": "^1.17.9",
     "@opentui/core": "^0.3.4",
     "@opentui/solid": "^0.3.4",
     "solid-js": "1.9.10"

@@ -1,15 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import serverPlugin from "./index.js"
 import packageJson from "./package.json" with { type: "json" }
-import { COMMAND_ENV, HANDOFF_NAMESPACE_ENV, PLUGIN_ID, handofffile, statusfile } from "./protocol.js"
+import { COMMAND_ENV, PLUGIN_ID } from "./protocol.js"
 import plugin, { indicator, sessiontitle } from "./tui"
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 const version = packageJson.version
-const handoffFile = (originSessionID = "none") => handofffile(originSessionID)
-const statusFile = (sessionID = "none") => statusfile(sessionID)
 const tempMetadata = (origin: string) => ({
   [PLUGIN_ID]: {
     type: "temp",
@@ -33,10 +29,8 @@ const env = () =>
     process?: { env?: Record<string, string | undefined> }
   }).process?.env ?? {}
 
-env()[HANDOFF_NAMESPACE_ENV] = "test"
-
 function cmd(rows: any[], value: string) {
-  return rows.find((row) => row.value === value)
+  return rows.find((row) => row.btwCommand === value || row.name === value)
 }
 
 async function select(rows: any[], value: string) {
@@ -61,24 +55,6 @@ function textMessage(id: string, role: "user" | "assistant", text: string, compl
           },
     parts: [{ id: `${id}_part`, type: "text", text }],
   }
-}
-
-function emptyTurn(created = Date.now()) {
-  return [
-    {
-      info: { id: "msg_empty_user", role: "user", time: { created } },
-      parts: [],
-    },
-    {
-      info: {
-        id: "msg_empty_assistant",
-        role: "assistant",
-        parentID: "msg_empty_user",
-        time: { created: created + 1 },
-      },
-      parts: [],
-    },
-  ]
 }
 
 function largeSourceMessages(count = 501) {
@@ -107,15 +83,11 @@ function setup(input?: {
   childSessions?: any[]
   deleteError?: Error
   deleteReject?: Error
-  deleteMessageError?: Error
-  abortError?: Error
   promptError?: Error
   promptAsyncError?: Error
   promptResult?: unknown
   onPrompt?: (args: Record<string, unknown>) => void
 }) {
-  rmSync(handoffFile(input?.sessionID ?? "ses_main"), { force: true })
-  rmSync(statusFile(input?.sessionID ?? "ses_main"), { force: true })
   const calls: string[] = []
   const toasts: Array<Record<string, unknown>> = []
   const views: any[] = []
@@ -124,6 +96,12 @@ function setup(input?: {
   const keymapLayers: any[] = []
   const kv = new Map<string, unknown>()
   const events = new Map<string, Array<(event: any) => void>>()
+  const dispatchCommand = (name: string) => {
+    const command = keymapLayers
+      .flatMap((layer) => layer?.commands ?? [])
+      .find((row) => row?.name === name)
+    return command?.run?.()
+  }
   let creates = 0
   let forks = 0
   let created: Record<string, unknown> | undefined
@@ -194,6 +172,7 @@ function setup(input?: {
           if (index >= 0) keymapLayers.splice(index, 1)
         }
       },
+      dispatchCommand,
     },
     kv: {
       ready: true,
@@ -356,22 +335,6 @@ function setup(input?: {
           if (input?.deleteError) return { error: input.deleteError }
           return {}
         },
-        async deleteMessage(args: Record<string, unknown>) {
-          calls.push("deleteMessage")
-          expectFlatParams(args, ["sessionID", "messageID"], ["sessionID", "messageID"])
-          if (input?.deleteMessageError) return { error: input.deleteMessageError }
-          if (Array.isArray(input?.originMessages)) {
-            const index = input.originMessages.findIndex((message) => message?.info?.id === args.messageID)
-            if (index >= 0) input.originMessages.splice(index, 1)
-          }
-          return { data: true }
-        },
-        async abort(args: Record<string, unknown>) {
-          calls.push("abort")
-          expectFlatParams(args, ["sessionID"], ["sessionID"])
-          if (input?.abortError) return { error: input.abortError }
-          return { data: true }
-        },
       },
       tui: {
         async selectSession(args: Record<string, unknown>) {
@@ -422,6 +385,13 @@ function setup(input?: {
     slot(name: string) {
       return slots.find((item) => item?.slots?.[name])
     },
+    slashRows() {
+      return keymapLayers
+        .flatMap((layer) => layer?.commands ?? [])
+        .filter((row) => row?.namespace === "palette" && typeof row.slashName === "string")
+        .filter((row) => (typeof row.hidden === "function" ? !row.hidden() : row.hidden !== true))
+        .map((row) => ({ display: `/${row.slashName}`, commandName: row.name, onSelect: () => dispatchCommand(row.name) }))
+    },
     toasts,
     updated: () => updated,
     views,
@@ -429,105 +399,8 @@ function setup(input?: {
 }
 
 describe("opencode-bytheway tui plugin", () => {
-  test("exports the runtime plugin id from index.js", () => {
-    expect(serverPlugin.id).toBe(PLUGIN_ID)
-  })
-
-  test("registers server tools without prompt slash shims", async () => {
-    const server = await serverPlugin.server()
-
-    expect(Object.keys(server.tool)).toEqual([
-      "btw_status",
-      "opencode_bytheway_plugin_open",
-      "opencode_bytheway_plugin_select_temp",
-    ])
-    expect(await server.tool.btw_status.execute({}, { sessionID: "ses_status" })).toBe(
-      `opencode-bytheway ${version} is loaded.\nsession: ses_status`,
-    )
-    expect(server.config).toBeUndefined()
-    expect(server["command.execute.before"]).toBeUndefined()
-  })
-
-  test("opencode_bytheway_plugin_open tool writes the prompt handoff and triggers btw.open in the TUI", async () => {
-    rmSync(handoffFile("ses_exp_server_open"), { force: true })
-    const client: any = {
-      tui: {
-        async publish(args: Record<string, unknown>) {
-          expect(args).toEqual({
-            body: {
-              type: "tui.command.execute",
-              properties: { command: "btw.open" },
-            },
-          })
-          return { data: true }
-        },
-      },
-    }
-
-    const server = await serverPlugin.server({ client })
-    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "investigate this" }, { sessionID: "ses_exp_server_open" })).resolves.toBe("")
-    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_open"), "utf8"))).toMatchObject({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_exp_server_open",
-      prompt: "investigate this",
-    })
-    rmSync(handoffFile("ses_exp_server_open"), { force: true })
-  })
-
-  test("opencode_bytheway_plugin_open tool preserves the user prompt exactly in the handoff file", async () => {
-    rmSync(handoffFile("ses_exp_server_prompt"), { force: true })
-    const client: any = {
-      tui: {
-        async publish() {
-          return { data: true }
-        },
-      },
-    }
-
-    const server = await serverPlugin.server({ client })
-    await expect(server.tool.opencode_bytheway_plugin_open.execute({ prompt: "  investigate this  " }, { sessionID: "ses_exp_server_prompt" })).resolves.toBe("")
-    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_prompt"), "utf8"))).toMatchObject({
-      type: "experimental-btw",
-      mode: "btw.open",
-      prompt: "  investigate this  ",
-    })
-    rmSync(handoffFile("ses_exp_server_prompt"), { force: true })
-  })
-
-  test("opencode_bytheway_plugin_open tool writes an empty prompt handoff when no prompt is provided", async () => {
-    rmSync(handoffFile("ses_exp_server_empty"), { force: true })
-    const client: any = {
-      tui: {
-        async publish() {
-          return { data: true }
-        },
-      },
-    }
-
-    const server = await serverPlugin.server({ client })
-    await expect(server.tool.opencode_bytheway_plugin_open.execute({}, { sessionID: "ses_exp_server_empty" })).resolves.toBe("")
-    expect(JSON.parse(readFileSync(handoffFile("ses_exp_server_empty"), "utf8"))).toMatchObject({
-      type: "experimental-btw",
-      mode: "btw.open",
-      prompt: "",
-    })
-    rmSync(handoffFile("ses_exp_server_empty"), { force: true })
-  })
-
-  test("opencode_bytheway_plugin_select_temp selects the provided session", async () => {
-    const client: any = {
-      tui: {
-        async selectSession(args: Record<string, unknown>) {
-          expect(args).toEqual({ sessionID: "ses_btw" })
-          return { data: true }
-        },
-      },
-    }
-
-    const server = await serverPlugin.server({ client })
-    await expect(server.tool.opencode_bytheway_plugin_select_temp.execute({ sessionID: "ses_btw" }, {} as any)).resolves.toBe("")
+  test("exports the TUI runtime plugin id", () => {
+    expect(plugin.id).toBe(PLUGIN_ID)
   })
 
   test("registers TUI command handlers with slash autocomplete metadata", async () => {
@@ -535,6 +408,11 @@ describe("opencode-bytheway tui plugin", () => {
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     expect(rows()).toHaveLength(5)
+    expect(cmd(rows(), "btw.open")?.name).toBe("btw")
+    expect(cmd(rows(), "btw.merge")?.name).toBe("btw-merge")
+    expect(cmd(rows(), "btw.end")?.name).toBe("btw-end")
+    expect(cmd(rows(), "btw.status")?.name).toBe("btw-status")
+    expect(cmd(rows(), "btw.prompt")?.name).toBe("btw-prompt")
     expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "btw" })
     expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "btw-merge" })
     expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "btw-end" })
@@ -549,6 +427,7 @@ describe("opencode-bytheway tui plugin", () => {
 
     const layer = keymapLayers.find((item) => item?.bindings?.some((binding: any) => binding.key === "return"))
     expect(layer).toBeTruthy()
+    expect(layer.mode).toBe("base")
 
     const prompt: any = {
       focused: true,
@@ -654,10 +533,15 @@ describe("opencode-bytheway tui plugin", () => {
       await plugin.tui(api, undefined, { state: "first" } as any)
 
       expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
+      expect(cmd(rows(), "btw.open")?.name).toBe("aside")
       expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "aside-merge" })
+      expect(cmd(rows(), "btw.merge")?.name).toBe("aside-merge")
       expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside-end" })
+      expect(cmd(rows(), "btw.end")?.name).toBe("aside-end")
       expect(cmd(rows(), "btw.status")?.slash).toEqual({ name: "aside-status" })
+      expect(cmd(rows(), "btw.status")?.name).toBe("aside-status")
       expect(cmd(rows(), "btw.prompt")?.slash).toEqual({ name: "btw-prompt" })
+      expect(cmd(rows(), "btw.prompt")?.name).toBe("btw-prompt")
       expect(indicator("ses_btw", { origin: "ses_main", temp: "ses_btw" } as any)).toEqual({
         title: "/aside session active",
         detail: "Run /aside-end to return to the original session as it is now",
@@ -689,74 +573,11 @@ describe("opencode-bytheway tui plugin", () => {
     expect(toasts).toEqual([
       {
         title: "opencode-bytheway",
-        message: `opencode-bytheway ${version} is loaded.\nsession: ses_status`,
+        message: `opencode-bytheway ${version} is loaded.\nmode: TUI plugin only\nsession: ses_status`,
         variant: "info",
         duration: 6000,
       },
     ])
-  })
-
-  test("btw.status reports matching server and TUI plugin versions", async () => {
-    const { api, rows, toasts } = setup({ sessionID: "ses_status_match" })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    writeFileSync(statusFile("ses_status_match"), `${JSON.stringify({
-      type: "opencode-bytheway-status",
-      version: 1,
-      sessionID: "ses_status_match",
-      serverVersion: version,
-    })}\n`)
-
-    await select(rows(), "btw.status")
-    await tick()
-    await tick()
-
-    expect(toasts).toEqual([
-      {
-        title: "opencode-bytheway",
-        message: [
-          "opencode-bytheway is loaded.",
-          `server: ${version}`,
-          `tui: ${version}`,
-          "session: ses_status_match",
-        ].join("\n"),
-        variant: "info",
-        duration: 6000,
-      },
-    ])
-    expect(existsSync(statusFile("ses_status_match"))).toBe(false)
-  })
-
-  test("btw.status warns when server and TUI plugin versions differ", async () => {
-    const { api, rows, toasts } = setup({ sessionID: "ses_status_mismatch" })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    writeFileSync(statusFile("ses_status_mismatch"), `${JSON.stringify({
-      type: "opencode-bytheway-status",
-      version: 1,
-      sessionID: "ses_status_mismatch",
-      serverVersion: "0.3.6",
-    })}\n`)
-
-    await select(rows(), "btw.status")
-    await tick()
-    await tick()
-
-    expect(toasts).toEqual([
-      {
-        title: "opencode-bytheway version mismatch",
-        message: [
-          "opencode-bytheway server and TUI plugin versions differ.",
-          "server: 0.3.6",
-          `tui: ${version}`,
-          "Update both opencode.jsonc and tui.jsonc to the same package version.",
-          "session: ses_status_mismatch",
-        ].join("\n"),
-        variant: "warning",
-        duration: 6000,
-      },
-    ])
-    expect(existsSync(statusFile("ses_status_mismatch"))).toBe(false)
   })
 
   test("shows /btw from home and hides /btw-end", async () => {
@@ -991,6 +812,29 @@ describe("opencode-bytheway tui plugin", () => {
     expect(cmd(rows(), "btw.end")?.suggested).toBeUndefined()
   })
 
+  test("slash completion dispatches /btw-end instead of /btw inside an active btw session", async () => {
+    const { api, kv, nav, rows, slashRows, toasts } = setup()
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+
+    expect(slashRows().map((row) => row.display)).not.toContain("/btw")
+    const end = slashRows().find((row) => row.display === "/btw-end")
+    expect(end?.commandName).toBe("btw-end")
+
+    end?.onSelect()
+    await tick()
+
+    expect(nav).toEqual([
+      { name: "session", params: { sessionID: "ses_btw" } },
+      { name: "session", params: { sessionID: "ses_main" } },
+    ])
+    expect(kv.get("opencode-bytheway.active")).toBeUndefined()
+    expect(toasts.at(-1)).toEqual({ variant: "info", message: "Returned to the original session as it is now." })
+  })
+
   test("warns when ending without an active btw session", async () => {
     const { api, calls, nav, rows, toasts } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
@@ -1177,167 +1021,6 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.open")
     await tick()
     expect(toasts.at(-1)?.message).toBe("Already inside a /btw session. Run /btw-end to return to the original session as it is now.")
-  })
-
-  test("uses the experimental handoff inside btw.open and skips the entry dialog", async () => {
-    rmSync(handoffFile("ses_exp_origin_a"), { force: true })
-    const tempMessages: any[] = []
-
-    const { api, kv, nav, prompted, rows, views } = setup({
-      sessionID: "ses_exp_origin_a",
-      tempMessages,
-      promptResult: {
-        info: { id: "msg_reply", role: "assistant" },
-        parts: [{ type: "text", text: "Experimental ANZAC reply" }],
-      },
-      onPrompt(args) {
-        expect(args).toEqual({
-          sessionID: "ses_btw",
-          parts: [{ type: "text", text: "tell me about the anzacs" }],
-        })
-        tempMessages.push(
-          textMessage("msg_prompt", "user", "tell me about the anzacs"),
-          textMessage("msg_reply", "assistant", "Experimental ANZAC reply", true),
-        )
-      },
-    })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    writeFileSync(handoffFile("ses_exp_origin_a"), `${JSON.stringify({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_exp_origin_a",
-      prompt: "tell me about the anzacs",
-    })}\n`)
-
-    await select(rows(), "btw.open")
-    await tick()
-    await tick()
-
-    expect(kv.get("opencode-bytheway.active")).toMatchObject({
-      origin: "ses_exp_origin_a",
-      temp: "ses_btw",
-      skipInitial: 2,
-    })
-    expectOriginState(kv.get("opencode-bytheway.active"), "ses_exp_origin_a")
-    expect(prompted()).toEqual({
-      sessionID: "ses_btw",
-      parts: [{ type: "text", text: "tell me about the anzacs" }],
-    })
-    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
-    expect(views).toEqual([])
-    expect(() => readFileSync(handoffFile("ses_exp_origin_a"), "utf8")).toThrow()
-    rmSync(handoffFile("ses_exp_origin_a"), { force: true })
-  })
-
-  test("deletes a handoff-generated empty origin turn before forking", async () => {
-    const originMessages = emptyTurn()
-    const { api, calls, fork, kv, rows } = setup({
-      sessionID: "ses_exp_origin_cleanup",
-      originMessages,
-    })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    writeFileSync(handoffFile("ses_exp_origin_cleanup"), `${JSON.stringify({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_exp_origin_cleanup",
-      prompt: "cleanup prompt",
-      time: new Date(Date.now() - 10).toISOString(),
-    })}\n`)
-
-    await select(rows(), "btw.open")
-    await tick()
-    await tick()
-
-    expect(originMessages).toEqual([])
-    expect(fork()).toEqual({ sessionID: "ses_exp_origin_cleanup", messageID: undefined })
-    expect(kv.get("opencode-bytheway.active")).toMatchObject({
-      origin: "ses_exp_origin_cleanup",
-      temp: "ses_btw",
-      skipInitial: 2,
-    })
-    expectOriginState(kv.get("opencode-bytheway.active"), "ses_exp_origin_cleanup")
-    expect(calls).toContain("deleteMessage")
-    rmSync(handoffFile("ses_exp_origin_cleanup"), { force: true })
-  })
-
-  test("uses the experimental handoff after clearing active state from another origin", async () => {
-    rmSync(handoffFile("ses_exp_origin_stale"), { force: true })
-    const tempMessages: any[] = []
-
-    const { api, kv, nav, prompted, rows } = setup({
-      sessionID: "ses_exp_origin_stale",
-      tempMessages,
-      onPrompt(args) {
-        expect(args).toEqual({
-          sessionID: "ses_btw",
-          parts: [{ type: "text", text: "this is a topic" }],
-        })
-        tempMessages.push(textMessage("msg_prompt", "user", "this is a topic"))
-      },
-    })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    kv.set("opencode-bytheway.active", { origin: "ses_old", temp: "ses_old_btw", baseCount: 2 })
-    writeFileSync(handoffFile("ses_exp_origin_stale"), `${JSON.stringify({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_exp_origin_stale",
-      prompt: "this is a topic",
-    })}\n`)
-
-    await select(rows(), "btw.open")
-    await tick()
-    await tick()
-
-    expect(kv.get("opencode-bytheway.active")).toMatchObject({
-      origin: "ses_exp_origin_stale",
-      temp: "ses_btw",
-      skipInitial: 2,
-    })
-    expectOriginState(kv.get("opencode-bytheway.active"), "ses_exp_origin_stale")
-    expect(prompted()).toEqual({
-      sessionID: "ses_btw",
-      parts: [{ type: "text", text: "this is a topic" }],
-    })
-    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
-    expect(() => readFileSync(handoffFile("ses_exp_origin_stale"), "utf8")).toThrow()
-    rmSync(handoffFile("ses_exp_origin_stale"), { force: true })
-  })
-
-  test("ignores the experimental handoff when it belongs to a different origin session", async () => {
-    rmSync(handoffFile("ses_exp_origin_b"), { force: true })
-    const { api, kv, nav, prompted, rows, views } = setup({ sessionID: "ses_exp_origin_b" })
-    await plugin.tui(api, undefined, { state: "first" } as any)
-
-    writeFileSync(handoffFile("ses_exp_origin_b"), `${JSON.stringify({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_other_origin",
-      prompt: "tell me about the anzacs",
-    })}\n`)
-
-    await select(rows(), "btw.open")
-    await tick()
-    await tick()
-
-    expectFastState(kv.get("opencode-bytheway.active"), "ses_exp_origin_b")
-    expect(prompted()).toBeUndefined()
-    expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_btw" } })
-    expect(views.at(-1)?.props?.title).toBe("Entered /btw Session")
-    expect(JSON.parse(readFileSync(handoffFile("ses_exp_origin_b"), "utf8"))).toMatchObject({
-      type: "experimental-btw",
-      version: 3,
-      mode: "btw.open",
-      originSessionID: "ses_other_origin",
-      prompt: "tell me about the anzacs",
-    })
-    rmSync(handoffFile("ses_exp_origin_b"), { force: true })
   })
 
   test("ends btw session, returns to origin, and deletes temp", async () => {
