@@ -524,6 +524,20 @@ describe("opencode-bytheway tui plugin", () => {
     expect(sessiontitle()).toBe("/btw session")
   })
 
+  test("clears persisted btw state when resuming directly into a saved temp session", async () => {
+    const { api, kv, rows, slashRows, slot } = setup({ sessionID: "ses_btw" })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    kv.set("opencode-bytheway.active", { origin: "ses_main", temp: "ses_btw", baseCount: 2 })
+
+    expect(slot("sidebar_content")?.slots?.sidebar_content({}, { session_id: "ses_btw" })).toBeNull()
+    expect(kv.get("opencode-bytheway.active")).toBeUndefined()
+    expect(cmd(rows(), "btw.open")?.hidden).toBe(false)
+    expect(cmd(rows(), "btw.merge")?.hidden).toBe(true)
+    expect(cmd(rows(), "btw.end")?.hidden).toBe(true)
+    expect(slashRows().map((row) => row.display)).not.toContain("/btw-end")
+  })
+
   test("derives slash command names from OPENCODE_BYTHEWAY_COMMAND", async () => {
     const prev = env()[COMMAND_ENV]
     env()[COMMAND_ENV] = "aside"

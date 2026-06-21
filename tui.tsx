@@ -218,6 +218,18 @@ const tui: TuiPlugin = async (api) => {
     if (!api.kv.ready) return;
     const value = api.kv.get(key);
     if (!isbtw(value)) return;
+    const route = api.route.current;
+    const sessionID = route.name === "session" && typeof route.params?.sessionID === "string"
+      ? route.params.sessionID
+      : undefined;
+    if (sessionID === value.temp) {
+      logdiagnostic("state.clear_resumed_temp", {
+        originSessionID: value.origin,
+        tempSessionID: value.temp,
+      });
+      api.kv.set(key, null);
+      return;
+    }
     btw = value;
     return btw;
   };

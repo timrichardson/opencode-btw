@@ -1,11 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
+- Built against OpenCode 1.17.9.
 - Remove the server plugin entry and helper tools; the package is now TUI-only.
 - Remove server file-handoff/status compatibility paths from the TUI plugin.
 - Update integration smoke tests to load the plugin only through `tui.json[c]`.
 - Fix slash autocomplete selection for `/btw-end` and `/btw-merge` by letting OpenCode's autocomplete handler own Enter while autocomplete is open.
+- Clear stale persisted `/btw` state when OpenCode resumes directly into a previously temporary session.
 
 ## 0.5.1
 
