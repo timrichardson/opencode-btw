@@ -309,6 +309,10 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     ].join("\n");
     expect(result, diagnostics).toBeTruthy();
     expect(result?.events, diagnostics).not.toContain("enter:error");
+    expect(result?.events, diagnostics).toContain("enter:fork:start");
+    expect(result?.events, diagnostics).toContain("enter:fork:complete");
+    expect(result?.events, diagnostics).toContain("elapsedMs");
+    expect(toasts, diagnostics).toContain("Starting /btw session...");
     expect(toasts, diagnostics).not.toContain("Request failed");
     expect(tui.exceptions(), diagnostics).toBe("");
   } finally {
@@ -400,6 +404,194 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     expect(tui.exceptions(), diagnostics).toBe("");
   }
   finally {
+    await tui.stop();
+  }
+}, 45_000);
+
+(RUN ? test : test.skip)("/btw-fast opens a recent-context side session without forking", async () => {
+  const sandbox = makeSandbox();
+  const port = 46_000 + Math.floor(Math.random() * 1_000);
+  const eventOffset = bytes(EVENT_LOG);
+  const toastOffset = bytes(TOAST_LOG);
+  const originOnly = `fast-origin-${Date.now()}`;
+  const tempOnly = `fast-temp-${Date.now()}`;
+  const tui = startOpencode(sandbox, port);
+
+  try {
+    const initialized = await waitFor(() => readSince(EVENT_LOG, eventOffset).includes("tui:init"));
+    expect(initialized, `TUI did not initialize. Output:\n${tui.output()}`).toBe(true);
+
+    const origin = await waitFor(async () => {
+      const result = await createSession(port, sandbox.project).catch((error) => ({
+        ok: false,
+        status: 0,
+        text: String(error),
+      }));
+      return result.ok && result.sessionID ? result : undefined;
+    });
+    expect(origin, `Failed to create origin session. Output:\n${tui.output()}`).toBeTruthy();
+    if (!origin?.sessionID) return;
+
+    const selected = await waitFor(async () => {
+      const result = await selectSession(port, sandbox.project, origin.sessionID).catch((error) => ({
+        ok: false,
+        status: 0,
+        text: String(error),
+      }));
+      return result.ok ? result : undefined;
+    });
+    expect(selected, `Failed to select origin session. Output:\n${tui.output()}`).toBeTruthy();
+
+    const seeded = await appendPrompt(port, sandbox.project, origin.sessionID, originOnly);
+    expect(seeded.ok, `Failed to seed origin message: ${seeded.status} ${seeded.text}`).toBe(true);
+    const originSeeded = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, origin.sessionID);
+      if (result.ok && hasExactUserText(result.messages, originOnly)) return result;
+      return undefined;
+    });
+    expect(originSeeded, `Origin seed message did not appear. Output:\n${tui.output()}`).toBeTruthy();
+
+    await Bun.sleep(1_000);
+    await typePrompt(tui.proc, "/btw-fast\r");
+
+    const opened = await waitFor(() => {
+      const events = eventsSince(eventOffset);
+      const error = events.find((event) => event.stage === "fast:error");
+      if (error) return { ok: false, error, events };
+      const seeded = events.find((event) => event.stage === "fast:seeded" && typeof event.tempSessionID === "string");
+      if (seeded) return { ok: true, seeded, tempSessionID: seeded.tempSessionID as string, events };
+      return undefined;
+    }, 15_000);
+    expect(opened?.ok, `Failed to open /btw-fast. Events:\n${readSince(EVENT_LOG, eventOffset)}`).toBe(true);
+    if (!opened?.ok) return;
+
+    const tempContext = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, opened.tempSessionID);
+      const text = findTextContaining(result.ok ? result.messages : undefined, "Recent context from the original /btw session.");
+      if (text?.includes(originOnly)) return { ...result, text };
+      return undefined;
+    }, 10_000);
+    expect(tempContext, `Fast context did not appear. Events:\n${readSince(EVENT_LOG, eventOffset)}`).toBeTruthy();
+
+    const tempSeeded = await appendPrompt(port, sandbox.project, opened.tempSessionID, tempOnly);
+    expect(tempSeeded.ok, `Failed to seed temp message: ${tempSeeded.status} ${tempSeeded.text}`).toBe(true);
+    const tempHasMessage = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, opened.tempSessionID);
+      if (result.ok && hasExactUserText(result.messages, tempOnly)) return result;
+      return undefined;
+    });
+    expect(tempHasMessage, `Temp seed message did not appear. Output:\n${tui.output()}`).toBeTruthy();
+
+    await typePrompt(tui.proc, "\r");
+    await Bun.sleep(500);
+    await typePrompt(tui.proc, "/btw-merge\r");
+
+    const merged = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, origin.sessionID);
+      if (!result.ok) return undefined;
+      const text = findTextContaining(result.messages, "Merged context from a temporary /btw session.");
+      if (text?.includes(tempOnly)) return { ...result, text };
+      return undefined;
+    }, 10_000);
+
+    const toasts = readSince(TOAST_LOG, toastOffset);
+    const events = readSince(EVENT_LOG, eventOffset);
+    const diagnostics = [
+      "TUI output:",
+      tui.output(),
+      "Plugin events:",
+      events,
+      "Plugin toasts:",
+      toasts,
+      "Captured exceptions:",
+      tui.exceptions(),
+      "Temp context:",
+      JSON.stringify(tempContext),
+      "Merged result:",
+      JSON.stringify(merged),
+    ].join("\n");
+    expect(events, diagnostics).not.toContain("enter:fork:start");
+    expect(events, diagnostics).toContain("fast:seeded");
+    expect(toasts, diagnostics).toContain("Starting /btw-fast session with recent context...");
+    expect(merged, diagnostics).toBeTruthy();
+    expect(merged?.text, diagnostics).toContain(tempOnly);
+    expect(merged?.text, diagnostics).not.toContain(originOnly);
+    expect(toasts, diagnostics).not.toContain("Request failed");
+    expect(tui.exceptions(), diagnostics).toBe("");
+  } finally {
+    await tui.stop();
+  }
+}, 45_000);
+
+(RUN ? test : test.skip)("/btw-fast from home does not copy a previous session", async () => {
+  const sandbox = makeSandbox();
+  const port = 46_000 + Math.floor(Math.random() * 1_000);
+  const eventOffset = bytes(EVENT_LOG);
+  const toastOffset = bytes(TOAST_LOG);
+  const oldText = `old-session-${Date.now()}`;
+  const tui = startOpencode(sandbox, port);
+
+  try {
+    const initialized = await waitFor(() => readSince(EVENT_LOG, eventOffset).includes("tui:init"));
+    expect(initialized, `TUI did not initialize. Output:\n${tui.output()}`).toBe(true);
+
+    const old = await waitFor(async () => {
+      const result = await createSession(port, sandbox.project).catch((error) => ({
+        ok: false,
+        status: 0,
+        text: String(error),
+      }));
+      return result.ok && result.sessionID ? result : undefined;
+    });
+    expect(old, `Failed to create old session. Output:\n${tui.output()}`).toBeTruthy();
+    if (!old?.sessionID) return;
+
+    const seeded = await appendPrompt(port, sandbox.project, old.sessionID, oldText);
+    expect(seeded.ok, `Failed to seed old session: ${seeded.status} ${seeded.text}`).toBe(true);
+    const oldSeeded = await waitFor(async () => {
+      const result = await sessionMessages(port, sandbox.project, old.sessionID);
+      if (result.ok && hasExactUserText(result.messages, oldText)) return result;
+      return undefined;
+    });
+    expect(oldSeeded, `Old session seed message did not appear. Output:\n${tui.output()}`).toBeTruthy();
+
+    await Bun.sleep(1_000);
+    await typePrompt(tui.proc, "/btw-fast\r");
+
+    const opened = await waitFor(() => {
+      const events = eventsSince(eventOffset);
+      const error = events.find((event) => event.stage === "fast:error");
+      if (error) return { ok: false, error, events };
+      const recent = events.find((event) => event.stage === "fast:recent" && typeof event.tempSessionID === "string");
+      if (recent) return { ok: true, recent, tempSessionID: recent.tempSessionID as string, events };
+      return undefined;
+    }, 15_000);
+    expect(opened?.ok, `Failed to open /btw-fast from home. Events:\n${readSince(EVENT_LOG, eventOffset)}`).toBe(true);
+    if (!opened?.ok) return;
+
+    const temp = await sessionMessages(port, sandbox.project, opened.tempSessionID);
+    const toasts = readSince(TOAST_LOG, toastOffset);
+    const events = readSince(EVENT_LOG, eventOffset);
+    const diagnostics = [
+      "TUI output:",
+      tui.output(),
+      "Plugin events:",
+      events,
+      "Plugin toasts:",
+      toasts,
+      "Captured exceptions:",
+      tui.exceptions(),
+      "Temp messages:",
+      JSON.stringify(temp),
+    ].join("\n");
+    expect(opened.recent.hasText, diagnostics).toBe(false);
+    expect(events, diagnostics).not.toContain("enter:origin:list");
+    expect(events, diagnostics).not.toContain("fast:seeded");
+    expect(textParts(temp.ok ? temp.messages : undefined).join("\n"), diagnostics).not.toContain(oldText);
+    expect(toasts, diagnostics).toContain("Starting /btw-fast session with recent context...");
+    expect(toasts, diagnostics).not.toContain("Request failed");
+    expect(tui.exceptions(), diagnostics).toBe("");
+  } finally {
     await tui.stop();
   }
 }, 45_000);

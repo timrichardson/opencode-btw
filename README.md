@@ -5,13 +5,15 @@ OpenCode plugin that adds temporary "by the way" side-session workflows.
 A proof-of-concept plugin to implement something like Claude Code's "btw" feature, where you can branch into a temporary side session, then discard it or merge text back into the parent session when you are done.
 `/btw` opens a session that you can exit with `/btw-end`.
 `/btw your prompt here` opens the temp session and sends that prompt there without adding it to the parent transcript.
+`/btw-fast` opens a temp session with only recent plain-text context when a full fork would be too slow.
 `/btw-prompt` can also be used as `/btw-prompt tell me more about foo()`; it is experimental.
-Typed `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` commands are handled by the TUI plugin instead of requiring a model call just to dispatch.
+Typed `/btw`, `/btw-fast`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` commands are handled by the TUI plugin instead of requiring a model call just to dispatch.
 
 
 Normal usage:
 - run `/btw` and then type in the temp session
 - run `/btw your prompt here` to open the temp session and send an initial prompt there
+- run `/btw-fast` when you want a faster side session with only recent plain-text context
 
 Experimental prompt entrypoint:
 - run `/btw-prompt your prompt here` to open the temp session and hand that prompt to the TUI plugin
@@ -37,10 +39,10 @@ The package is a TUI-only plugin. It should be loaded from `tui.json[c]`.
 Use `--force` if you need to replace an existing pinned version:
 
 ```bash
-opencode plugin opencode-bytheway@0.5.0 --global --force
+opencode plugin opencode-bytheway@0.7.0 --global --force
 ```
 
-OpenCode 1.17.9 loads TUI plugins from `tui.json[c]`. Do not add this package to `opencode.json[c]`; it no longer exports a server plugin.
+OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`. Do not add this package to `opencode.json[c]`; it no longer exports a server plugin.
 
 Example `tui.jsonc`:
 
@@ -54,7 +56,7 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.5.0"]
+  "plugin": ["opencode-bytheway@0.7.0"]
 }
 ```
 
@@ -70,7 +72,7 @@ Optional command-family override:
 OPENCODE_BYTHEWAY_COMMAND=aside
 ```
 
-With that env var set, the plugin exposes `/aside`, `/aside-merge`, `/aside-end`, and `/aside-status` instead of the default `/btw` command family.
+With that env var set, the plugin exposes `/aside`, `/aside-fast`, `/aside-merge`, `/aside-end`, and `/aside-status` instead of the default `/btw` command family.
 The experimental `/btw-prompt` command stays fixed.
 
 Optional diagnostic logging:
@@ -85,6 +87,7 @@ These logs are disabled by default.
 ## Commands
 
 - `/btw`: open a temporary btw side session in the same terminal, preserving context from the current session
+- `/btw-fast`: open a temporary btw side session with only bounded recent plain-text context, avoiding a full session fork
 - `/btw your prompt here`: open the temporary side session and send that prompt inside the forked temp session
 - `/btw-merge`: append plain user/assistant text from the temporary session into the original session as it exists when merge runs, then close the temporary session
 - `/btw-end`: return to the original session as it exists now and remove the temporary btw session without carrying text back
@@ -116,7 +119,7 @@ After changing `tui.tsx`, run `bun run build` again before reopening or reloadin
 `bun run test:integration` launches the real installed `opencode` TUI inside a pseudo-terminal and drives `/btw` from an isolated temporary config. Use it when developing TUI/session behavior; it is intentionally separate from `bun run test` because it depends on the local OpenCode binary and runtime environment.
 Set `OPENCODE_BTW_OPENCODE_BIN=/absolute/path/to/opencode` to run the integration suite against a specific OpenCode binary.
 
-OpenCode 1.17.9 loads TUI plugins from `tui.json[c]`.
+OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`.
 
 Example `tui.json` entry for the slash commands:
 
@@ -141,6 +144,14 @@ Their absolute `file://` paths are machine-specific and should not be committed 
 It uses the same TUI-owned fork flow as `/btw your prompt here`.
 
 ## Changelog
+
+### 0.7.0
+
+- Built against OpenCode 1.17.12.
+- Add `/btw-fast`, which opens a temporary session with only bounded recent plain-text context instead of forking the full source session.
+- Show immediate startup toasts for `/btw` and `/btw-fast` so long-running opens have visible feedback.
+- Avoid copying the latest previous session when `/btw` or `/btw-fast` starts without an active session.
+- Add fork timing diagnostics for `/btw` and real-TUI integration coverage for `/btw-fast`.
 
 ### 0.6.0
 

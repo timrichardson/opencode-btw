@@ -72,6 +72,7 @@ function setup(input?: {
   listError?: Error
   updateError?: Error
   forkError?: Error
+  forkWait?: Promise<void>
   forkIDs?: string[]
   sourceTail?: boolean
   sourceBlank?: boolean
@@ -109,6 +110,7 @@ function setup(input?: {
   let fork: Record<string, unknown> | undefined
   let prompted: Record<string, unknown> | undefined
   let appended: Record<string, unknown> | undefined
+  const tempMessages = [...(input?.tempMessages ?? [])]
   const originSessionID = input?.sessionID ?? "ses_main"
   let route: any =
     input?.session === false
@@ -216,58 +218,58 @@ function setup(input?: {
         },
         async messages(args: Record<string, unknown>) {
           calls.push("messages")
-          expectFlatParams(args, ["sessionID"], ["sessionID"])
-          if (args.sessionID !== originSessionID) return { data: input?.tempMessages ?? [] }
-          if (input?.originMessages) return { data: input.originMessages }
-          return {
-            data: input?.sourceTail
+          expectFlatParams(args, ["sessionID", "limit"], ["sessionID"])
+          const limited = (items: any[]) => typeof args.limit === "number" && args.limit > 0 ? items.slice(-args.limit) : items
+          if (args.sessionID !== originSessionID) return { data: limited(tempMessages) }
+          if (input?.originMessages) return { data: limited(input.originMessages) }
+          const data = input?.sourceTail
+            ? [
+                {
+                  info: { id: "msg_done_user", role: "user", time: { created: 1 } },
+                  parts: [{ id: "prt_done_user", type: "text", text: "done" }],
+                },
+                {
+                  info: {
+                    id: "msg_done_assistant",
+                    role: "assistant",
+                    parentID: "msg_done_user",
+                    time: { created: 2, completed: 3 },
+                    finish: "stop",
+                  },
+                  parts: [{ id: "prt_done_assistant", type: "text", text: "done" }],
+                },
+                {
+                  info: { id: "msg_tail_user", role: "user", time: { created: 4 } },
+                  parts: [{ id: "prt_tail_user", type: "text", text: "tail" }],
+                },
+                {
+                  info: {
+                    id: "msg_tail_assistant",
+                    role: "assistant",
+                    parentID: "msg_tail_user",
+                    time: { created: 5 },
+                  },
+                  parts: [{ id: "prt_tail_assistant", type: "text", text: "tail" }],
+                },
+              ]
+            : input?.sourceBlank
               ? [
                   {
-                    info: { id: "msg_done_user", role: "user", time: { created: 1 } },
-                    parts: [{ id: "prt_done_user", type: "text", text: "done" }],
+                    info: { id: "msg_busy_user", role: "user", time: { created: 1 } },
+                    parts: [{ id: "prt_busy_user", type: "text", text: "busy" }],
                   },
                   {
                     info: {
-                      id: "msg_done_assistant",
+                      id: "msg_busy_assistant",
                       role: "assistant",
-                      parentID: "msg_done_user",
-                      time: { created: 2, completed: 3 },
-                      finish: "stop",
+                      parentID: "msg_busy_user",
+                      time: { created: 2 },
                     },
-                    parts: [{ id: "prt_done_assistant", type: "text", text: "done" }],
-                  },
-                  {
-                    info: { id: "msg_tail_user", role: "user", time: { created: 4 } },
-                    parts: [{ id: "prt_tail_user", type: "text", text: "tail" }],
-                  },
-                  {
-                    info: {
-                      id: "msg_tail_assistant",
-                      role: "assistant",
-                      parentID: "msg_tail_user",
-                      time: { created: 5 },
-                    },
-                    parts: [{ id: "prt_tail_assistant", type: "text", text: "tail" }],
+                    parts: [{ id: "prt_busy_assistant", type: "text", text: "busy" }],
                   },
                 ]
-              : input?.sourceBlank
-                ? [
-                    {
-                      info: { id: "msg_busy_user", role: "user", time: { created: 1 } },
-                      parts: [{ id: "prt_busy_user", type: "text", text: "busy" }],
-                    },
-                    {
-                      info: {
-                        id: "msg_busy_assistant",
-                        role: "assistant",
-                        parentID: "msg_busy_user",
-                        time: { created: 2 },
-                      },
-                      parts: [{ id: "prt_busy_assistant", type: "text", text: "busy" }],
-                    },
-                  ]
-                : [],
-          }
+              : []
+          return { data: limited(data) }
         },
         async list(args: Record<string, unknown>) {
           calls.push("list")
@@ -280,6 +282,7 @@ function setup(input?: {
           fork = args
           expect(options).toEqual({ throwOnError: true })
           expectFlatParams(args, ["sessionID", "messageID"], ["sessionID"])
+          await input?.forkWait
           const id = input?.forkIDs?.[forks] ?? "ses_btw"
           forks += 1
           if (input?.forkError) throw input.forkError
@@ -320,6 +323,12 @@ function setup(input?: {
           expectFlatParams(args, ["sessionID", "noReply", "parts"], ["sessionID"])
           input?.onPrompt?.(args)
           if (input?.promptError) return { error: input.promptError }
+          if (args.sessionID !== originSessionID && Array.isArray(args.parts)) {
+            const text = args.parts
+              .flatMap((part: any) => part?.type === "text" && typeof part.text === "string" ? [part.text] : [])
+              .join("\n\n")
+            if (text) tempMessages.push(textMessage(`msg_temp_${tempMessages.length}`, "user", text, false, tempMessages.length + 1))
+          }
           return { data: input?.promptResult }
         },
         async promptAsync(args: Record<string, unknown>) {
@@ -407,13 +416,15 @@ describe("opencode-bytheway tui plugin", () => {
     const { api, rows } = setup()
     await plugin.tui(api, undefined, { state: "first" } as any)
 
-    expect(rows()).toHaveLength(5)
+    expect(rows()).toHaveLength(6)
     expect(cmd(rows(), "btw.open")?.name).toBe("btw")
+    expect(cmd(rows(), "btw.fast")?.name).toBe("btw-fast")
     expect(cmd(rows(), "btw.merge")?.name).toBe("btw-merge")
     expect(cmd(rows(), "btw.end")?.name).toBe("btw-end")
     expect(cmd(rows(), "btw.status")?.name).toBe("btw-status")
     expect(cmd(rows(), "btw.prompt")?.name).toBe("btw-prompt")
     expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "btw" })
+    expect(cmd(rows(), "btw.fast")?.slash).toEqual({ name: "btw-fast" })
     expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "btw-merge" })
     expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "btw-end" })
     expect(cmd(rows(), "btw.status")?.slash).toEqual({ name: "btw-status" })
@@ -443,6 +454,8 @@ describe("opencode-bytheway tui plugin", () => {
 
     expect(layer.enabled()).toBe(false)
     prompt.current.input = "/btw this is a topic"
+    expect(layer.enabled()).toBe(true)
+    prompt.current.input = "/btw-fast"
     expect(layer.enabled()).toBe(true)
     prompt.current.input = "/btw-status"
     expect(layer.enabled()).toBe(true)
@@ -548,6 +561,8 @@ describe("opencode-bytheway tui plugin", () => {
 
       expect(cmd(rows(), "btw.open")?.slash).toEqual({ name: "aside" })
       expect(cmd(rows(), "btw.open")?.name).toBe("aside")
+      expect(cmd(rows(), "btw.fast")?.slash).toEqual({ name: "aside-fast" })
+      expect(cmd(rows(), "btw.fast")?.name).toBe("aside-fast")
       expect(cmd(rows(), "btw.merge")?.slash).toEqual({ name: "aside-merge" })
       expect(cmd(rows(), "btw.merge")?.name).toBe("aside-merge")
       expect(cmd(rows(), "btw.end")?.slash).toEqual({ name: "aside-end" })
@@ -681,7 +696,7 @@ describe("opencode-bytheway tui plugin", () => {
     expect(created()).toBeUndefined()
     expect(fork()).toEqual({ sessionID: "ses_main", messageID: undefined })
     expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
-    expect(calls).toEqual(["list", "fork", "update"])
+    expect(calls).toEqual(["create", "fork", "update"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
     expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
   })
@@ -750,7 +765,104 @@ describe("opencode-bytheway tui plugin", () => {
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
     expectFastState(kv.get("opencode-bytheway.active"), sourceID)
     expect(calls).toEqual(["list", "fork", "update"])
-    expect(toasts).toEqual([])
+    expect(toasts).toContainEqual({ variant: "info", message: "Starting /btw session...", duration: 4000 })
+  })
+
+  test("shows immediate feedback while /btw is forking", async () => {
+    let releaseFork!: () => void
+    const forkWait = new Promise<void>((resolve) => {
+      releaseFork = resolve
+    })
+    const { api, nav, rows, toasts } = setup({ forkWait })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    const opened = cmd(rows(), "btw.open")?.onSelect()
+    await tick()
+
+    expect(toasts).toContainEqual({ variant: "info", message: "Starting /btw session...", duration: 4000 })
+    expect(nav).toEqual([])
+
+    releaseFork()
+    await opened
+    await tick()
+
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+  })
+
+  test("/btw-fast creates a temp session with bounded recent context", async () => {
+    const sourceID = "ses_fast_source"
+    const { api, calls, kv, nav, prompted, rows, toasts, updated } = setup({
+      sessionID: sourceID,
+      createIDs: ["ses_btw"],
+      originMessages: largeSourceMessages(20),
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.fast")
+    await tick()
+    await tick()
+
+    expect(calls).toEqual(["list", "create", "update", "messages", "prompt", "messages"])
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata(sourceID) })
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toMatchObject({ origin: sourceID, temp: "ses_btw", baseMessageID: "msg_temp_0" })
+    expect(typeof (kv.get("opencode-bytheway.active") as any)?.originTime).toBe("number")
+    expect(prompted()?.sessionID).toBe("ses_btw")
+    expect(prompted()?.noReply).toBe(true)
+    const text = prompted()?.parts?.[0]?.text
+    expect(text).toContain("Recent context from the original /btw session.")
+    expect(text).toContain("message 8")
+    expect(text).toContain("message 19")
+    expect(text).not.toContain("message 7")
+    expect(toasts).toContainEqual({ variant: "info", message: "Starting /btw-fast session with recent context...", duration: 4000 })
+  })
+
+  test("/btw-fast from home does not copy the latest previous session", async () => {
+    const { api, calls, kv, nav, prompted, rows, updated } = setup({
+      session: false,
+      createIDs: ["ses_main", "ses_btw"],
+      listSessions: [{ id: "ses_old", title: "old session", time: { updated: 999 } }],
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.fast")
+    await tick()
+    await tick()
+
+    expect(calls).toEqual(["create", "create", "update", "messages"])
+    expect(updated()).toEqual({ sessionID: "ses_btw", title: "/btw session", metadata: tempMetadata("ses_main") })
+    expect(prompted()).toBeUndefined()
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expect(kv.get("opencode-bytheway.active")).toMatchObject({ origin: "ses_main", temp: "ses_btw" })
+    expect((kv.get("opencode-bytheway.active") as any)?.baseMessageID).toBeUndefined()
+  })
+
+  test("/btw-fast seeded context is excluded when merging", async () => {
+    const sourceID = "ses_fast_source"
+    const { api, kv, prompted, rows } = setup({
+      sessionID: sourceID,
+      createIDs: ["ses_btw"],
+      originMessages: [textMessage("msg_origin", "user", "origin context", false, 1)],
+    })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.fast")
+    await tick()
+    await tick()
+    await api.client.session.prompt({
+      sessionID: "ses_btw",
+      noReply: true,
+      parts: [{ type: "text", text: "new temp work" }],
+    })
+    await select(rows(), "btw.merge")
+    await tick()
+    await tick()
+
+    const text = prompted()?.parts?.[0]?.text
+    expect(text).toContain("new temp work")
+    expect(text).not.toContain("origin context")
+    expect(text).not.toContain("Recent context from the original /btw session.")
+    expect(kv.get("opencode-bytheway.active")).toBeUndefined()
   })
 
   test("shows an error toast when opening /btw fails", async () => {
@@ -835,6 +947,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(slashRows().map((row) => row.display)).not.toContain("/btw")
+    expect(slashRows().map((row) => row.display)).not.toContain("/btw-fast")
     const end = slashRows().find((row) => row.display === "/btw-end")
     expect(end?.commandName).toBe("btw-end")
 

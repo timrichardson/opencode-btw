@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Built against OpenCode 1.17.12.
+- Add `/btw-fast`, which opens a temporary session with only bounded recent plain-text context instead of forking the full source session.
+- Show immediate startup toasts for `/btw` and `/btw-fast` so long-running opens have visible feedback.
+- Avoid copying the latest previous session when `/btw` or `/btw-fast` starts without an active session.
+- Add fork timing diagnostics for `/btw` and real-TUI integration coverage for `/btw-fast`.
+
 ## 0.6.0
 
 - Built against OpenCode 1.17.9.

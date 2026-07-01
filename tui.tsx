@@ -11,6 +11,7 @@ import {
   TUI_TOAST_LOG_FILE,
   diagnosticsenabled,
   endname,
+  fastname,
   mergename,
   openname,
   slash,
@@ -85,6 +86,7 @@ const ui = {
 
 const key = ACTIVE_STATE_KEY;
 const metadataKey = PLUGIN_ID;
+const RECENT_CONTEXT_LIMIT = 12;
 
 const isbtw = (value: unknown): value is Btw => {
   if (!value || typeof value !== "object") return false;
@@ -254,10 +256,13 @@ const tui: TuiPlugin = async (api) => {
     if (state.temp === sessionID) return state;
   };
 
-  const messages = async (sessionID: string): Promise<SessionMessage[]> => {
-    const list = await api.client.session.messages({ sessionID }).catch(() => undefined);
-    if (!list?.data?.length) return [];
-    return list.data as SessionMessage[];
+  const messages = async (sessionID: string, limit?: number): Promise<SessionMessage[]> => {
+    const list = await api.client.session
+      .messages({ sessionID, ...(limit === undefined ? {} : { limit }) })
+      .catch(() => undefined);
+    if (Array.isArray(list?.data)) return list.data as SessionMessage[];
+    if (Array.isArray(list?.data?.items)) return list.data.items as SessionMessage[];
+    return [];
   };
 
   const sessioninfo = async (sessionID: string) => {
@@ -280,6 +285,24 @@ const tui: TuiPlugin = async (api) => {
       .map((part) => part.text!.trim())
       .filter(Boolean)
       .join("\n\n");
+
+  const recentcontext = (items: SessionMessage[]) => {
+    const turns = items
+      .map((item) => {
+        const text = collecttext(item.parts);
+        if (!text) return;
+        const role = item.info.role === "assistant" ? "Assistant" : "User";
+        return `${role}:\n${text}`;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (!turns.length) return;
+    return [
+      `Recent context from the original ${slash(openname())} session.`,
+      `This context was copied by ${slash(fastname())}; do not merge it back.`,
+      "",
+      turns.join("\n\n"),
+    ].join("\n");
+  };
 
   const rehydrate = async () => {
     if (btw) return btw;
@@ -309,17 +332,6 @@ const tui: TuiPlugin = async (api) => {
   const origin = async () => {
     const sessionID = current();
     if (sessionID) return { sessionID, created: false };
-
-    logevent("enter:origin:list:start", {});
-    const list: any = await api.client.session
-      .list({ roots: true, limit: 1 })
-      .catch((err) => ({ error: err }));
-    if (list.error) logevent("enter:origin:list:error", { error: errorinfo(list.error) });
-    const latest = (Array.isArray(list.data) ? list.data : list.data?.items)?.[0]?.id;
-    if (typeof latest === "string") {
-      logevent("enter:origin:list:success", { sessionID: latest });
-      return { sessionID: latest, created: false };
-    }
 
     logevent("enter:origin:create:start", {});
     const next: any = await api.client.session.create().catch((err) => ({ error: err }));
@@ -423,7 +435,17 @@ const tui: TuiPlugin = async (api) => {
       sessionID,
       messageID: cut.mode === "cut" ? cut.messageID : undefined,
     };
+    logevent("enter:fork:start", {
+      originSessionID: sessionID,
+      mode: cut.mode,
+      messageID: input.messageID ?? null,
+    });
     const next: any = await api.client.session.fork(input, { throwOnError: true }).catch((error) => ({ error }));
+    logevent("enter:fork:complete", {
+      originSessionID: sessionID,
+      ok: Boolean(next.data?.id) && !next.error,
+      elapsedMs: Date.now() - started,
+    });
     if (next.error || !next.data?.id) {
       if (next.error) logevent("enter:fork:error", { originSessionID: sessionID, error: errorinfo(next.error) });
 
@@ -441,7 +463,7 @@ const tui: TuiPlugin = async (api) => {
         return typeof created === "number" && created >= started - 1000;
       })?.id;
       if (typeof fallback === "string") {
-        logevent("enter:fork:fallback:list:success", { originSessionID: sessionID, sessionID: fallback });
+        logevent("enter:fork:fallback:list:success", { originSessionID: sessionID, sessionID: fallback, elapsedMs: Date.now() - started });
         return fallback;
       }
     }
@@ -458,6 +480,41 @@ const tui: TuiPlugin = async (api) => {
       .update({ sessionID, title: sessiontitle(), metadata: tempmetadata(originSessionID) })
       .catch(() => undefined);
     return !next?.error;
+  };
+
+  const createfasttemp = async (originSessionID: string) => {
+    logevent("fast:create:start", { originSessionID });
+    const next: any = await api.client.session.create().catch((error) => ({ error }));
+    if (next.error) logevent("fast:create:error", { originSessionID, error: errorinfo(next.error) });
+    if (next.error || !next.data?.id)
+      throw next.error ?? new Error("Failed to create temporary session.");
+    logevent("fast:create", { originSessionID, tempSessionID: next.data.id });
+    return next.data.id as string;
+  };
+
+  const seedrecentcontext = async (sourceID: string, temp: string) => {
+    logevent("fast:recent:start", { originSessionID: sourceID, limit: RECENT_CONTEXT_LIMIT });
+    const recent = await messages(sourceID, RECENT_CONTEXT_LIMIT);
+    const text = recentcontext(recent);
+    logevent("fast:recent", { originSessionID: sourceID, tempSessionID: temp, count: recent.length, hasText: Boolean(text) });
+    if (!text) return;
+
+    const seeded = await api.client.session.prompt({
+      sessionID: temp,
+      noReply: true,
+      parts: [{ type: "text", text }],
+    });
+    if (seeded?.error) throw seeded.error;
+
+    const after = await messages(temp, 1);
+    const boundary = after.at(-1)?.info.id;
+    logevent("fast:seeded", {
+      originSessionID: sourceID,
+      tempSessionID: temp,
+      boundary: boundary ?? null,
+      length: text.length,
+    });
+    return boundary;
   };
 
   const stateforentry = (sessionID: string | undefined, state: Btw | undefined) => {
@@ -600,15 +657,67 @@ const tui: TuiPlugin = async (api) => {
     showentrydialog();
   };
 
+  const openfastentry = async (sessionID: string | undefined, activeState: Btw | undefined, directPrompt?: string) => {
+    logevent("fast:start", { sessionID, hasState: Boolean(activeState) });
+    const source = await origin();
+    const sourceID = source.sessionID;
+    const originTime = Date.now();
+    logevent("fast:origin", { sessionID: sourceID, created: source.created });
+
+    const temp = await createfasttemp(sourceID);
+    const labeled = await label(temp, sourceID);
+    logevent("fast:label", { originSessionID: sourceID, tempSessionID: temp, labeled });
+    const boundary = await seedrecentcontext(sourceID, temp);
+    save(btwstate(sourceID, temp, boundary, { originTime }));
+    api.route.navigate("session", { sessionID: temp });
+    refreshcommands();
+
+    const initial = directPrompt !== undefined ? { prompt: directPrompt } : undefined;
+    if (initial) {
+      await seedinitialprompt(sourceID, temp, { mode: "all", count: RECENT_CONTEXT_LIMIT, boundary }, initial, originTime);
+      return;
+    }
+
+    showentrydialog();
+  };
+
   const enter = async (directPrompt?: string) => {
     const sessionID = current();
     const activeState = stateforentry(sessionID, await getstate());
     if (await resumeactiveentry(sessionID, activeState)) return;
 
+    toast({
+      variant: "info",
+      message: `Starting ${slash(openname())} session...`,
+      duration: 4000,
+    });
+
     try {
       await openentry(sessionID, activeState, directPrompt);
     } catch (err) {
       logevent("enter:error", { error: errorinfo(err) });
+      toast({
+        variant: "error",
+        message: msg(err),
+      });
+    }
+  };
+
+  const enterfast = async (directPrompt?: string) => {
+    const sessionID = current();
+    const activeState = stateforentry(sessionID, await getstate());
+    if (await resumeactiveentry(sessionID, activeState)) return;
+
+    toast({
+      variant: "info",
+      message: `Starting ${slash(fastname())} session with recent context...`,
+      duration: 4000,
+    });
+
+    try {
+      await openfastentry(sessionID, activeState, directPrompt);
+    } catch (err) {
+      logevent("fast:error", { error: errorinfo(err) });
       toast({
         variant: "error",
         message: msg(err),
@@ -752,7 +861,7 @@ const tui: TuiPlugin = async (api) => {
   const isbtwpromptcommand = (input: string) => {
     const command = parsepromptcommand(input);
     if (!command) return false;
-    return [openname(), mergename(), endname(), statusname(), EXPERIMENTAL_COMMAND].includes(command.name);
+    return [openname(), fastname(), mergename(), endname(), statusname(), EXPERIMENTAL_COMMAND].includes(command.name);
   };
 
   const handlepromptsubmit = () => {
@@ -771,6 +880,12 @@ const tui: TuiPlugin = async (api) => {
       const text = command.arguments;
       prompt.reset();
       void enter(text.trim() ? text : undefined);
+      return true;
+    }
+    if (command.name === fastname()) {
+      const text = command.arguments;
+      prompt.reset();
+      void enterfast(text.trim() ? text : undefined);
       return true;
     }
     if (command.name === mergename()) {
@@ -872,7 +987,7 @@ const tui: TuiPlugin = async (api) => {
   });
 
   logdiagnostic("command.register", {
-    commands: [openname(), mergename(), endname(), statusname(), EXPERIMENTAL_COMMAND],
+    commands: [openname(), fastname(), mergename(), endname(), statusname(), EXPERIMENTAL_COMMAND],
     slashbase: slashbase(),
   });
   const commandstate = () => {
@@ -914,6 +1029,20 @@ const tui: TuiPlugin = async (api) => {
         hidden: state.active,
         run: () => selectcommand(openname(), "run", () => enter()),
         onSelect: () => selectcommand(openname(), "onSelect", () => enter()),
+      },
+      {
+        namespace: "palette",
+        name: fastname(),
+        title: "By the way fast",
+        btwCommand: "btw.fast",
+        desc: `Open a ${slash(openname())} side session with recent context only`,
+        description: `Open a ${slash(openname())} side session with recent context only`,
+        category: "Session",
+        slashName: fastname(),
+        slash: { name: fastname() },
+        hidden: state.active,
+        run: () => selectcommand(fastname(), "run", () => enterfast()),
+        onSelect: () => selectcommand(fastname(), "onSelect", () => enterfast()),
       },
       {
         namespace: "palette",
@@ -975,6 +1104,11 @@ const tui: TuiPlugin = async (api) => {
         name: "btw.open",
         hidden: true,
         run: () => selectcommand("btw.open", "legacy-run", () => enter()),
+      },
+      {
+        name: "btw.fast",
+        hidden: true,
+        run: () => selectcommand("btw.fast", "legacy-run", () => enterfast()),
       },
       {
         name: "btw.merge",

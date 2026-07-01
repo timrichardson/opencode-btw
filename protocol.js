@@ -22,6 +22,7 @@ export const slashbase = () => {
 
 export const slash = (name) => `/${name}`
 export const openname = () => slashbase()
+export const fastname = () => `${slashbase()}-fast`
 export const endname = () => `${slashbase()}-end`
 export const mergename = () => `${slashbase()}-merge`
 export const statusname = () => `${slashbase()}-status`
