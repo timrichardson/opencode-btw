@@ -2,7 +2,22 @@
 
 OpenCode plugin that adds temporary "by the way" side-session workflows.
 
-A proof-of-concept plugin to implement something like Claude Code's "btw" feature, where you can branch into a temporary side session, then discard it or merge text back into the parent session when you are done.
+## Quick notes on Installation / Upgrade
+
+Install or upgrade with OpenCode's plugin installer:
+
+```bash
+opencode plugin opencode-bytheway@0.7.0 --global --force
+```
+* use this method because tagging @latest does not update, it's a one-shot meaning of 'latest' (by intention of opencode)
+
+* Restart or reload OpenCode after updating so the TUI plugin is reloaded.
+
+### name clash
+A plugin package opencode-btw already exists. It is not an attempt to emulate Claude Code 'by the way', it provides persistent steering hints.
+
+## Usage
+Implements something like Claude Code's "btw" feature. You can branch into a temporary side session, then discard it or merge text back into the parent session when you are done.
 `/btw` opens a session that you can exit with `/btw-end`.
 `/btw your prompt here` opens the temp session and sends that prompt there without adding it to the parent transcript.
 `/btw-fast` opens a temp session with only recent plain-text context when a full fork would be too slow.
@@ -20,10 +35,7 @@ Experimental prompt entrypoint:
 - the command is handled in the TUI without an LLM hop
 - the TUI plugin forks the current session, switches you into the fork in the same terminal, and sends the initial prompt there without adding it to the parent transcript
 
-No nesting.
-
-# name clash
-A plugin package opencode-btw already exists. It is not an attempt to emulate Claude Code, it provides persistent steering hints. 
+No nesting of btw sessions.
 
 
 ## Install
@@ -36,7 +48,9 @@ opencode plugin opencode-bytheway --global
 
 The package is a TUI-only plugin. It should be loaded from `tui.json[c]`.
 
-Use `--force` if you need to replace an existing pinned version:
+### Recommended update method
+
+Use `--force` if you need to replace an existing pinned version (including if you used @latest because surprise, this does not update when versions change):
 
 ```bash
 opencode plugin opencode-bytheway@0.7.0 --global --force
@@ -146,6 +160,10 @@ It uses the same TUI-owned fork flow as `/btw your prompt here`.
 ## Changelog
 
 ### 0.7.0
+
+
+
+#### What's New
 
 - Built against OpenCode 1.17.12.
 - Add `/btw-fast`, which opens a temporary session with only bounded recent plain-text context instead of forking the full source session.
