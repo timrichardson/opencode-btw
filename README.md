@@ -231,7 +231,7 @@ It uses the same TUI-owned fork flow as `/btw your prompt here`.
 - Scope V2 active state by temporary session and preserve admitted merge payloads for exact retry reconciliation.
 - Retain direct-prompt context without a completed assistant response and test merge pagination across a real cursor boundary.
 - Show a persistent V2 sidebar indicator while the current session is an active `/btw` side session.
-- Document simultaneous V1/V2 configuration and run TypeScript validation in CI.
+- Publish prereleases on npm's default `latest` channel, document simultaneous V1/V2 configuration, and run TypeScript validation in CI.
 - Tested with OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17055`.
 
 ### 0.8.0-beta.2

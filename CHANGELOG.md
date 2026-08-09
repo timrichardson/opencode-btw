@@ -7,6 +7,7 @@
 - Scope V2 active state by temporary session so multiple TUI instances do not navigate into or block one another's side sessions.
 - Preserve the admitted merge payload for exact retry reconciliation, retain context for direct prompts without a completed assistant response, and test merge pagination across a real cursor boundary.
 - Show a persistent V2 sidebar indicator while the current session is an active `/btw` side session.
+- Publish prereleases on npm's default `latest` channel instead of maintaining a separate `next` channel.
 - Run TypeScript validation in CI.
 
 Compatibility targets: OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17055`.

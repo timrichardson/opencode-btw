@@ -32,11 +32,10 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
+          echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
           if [[ "$version" == *-* ]]; then
-            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
-            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
