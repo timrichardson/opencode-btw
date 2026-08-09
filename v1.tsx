@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core";
-import type { TuiPlugin, TuiPluginModule, TuiPromptRef } from "@opencode-ai/plugin/tui";
+import type { TuiPlugin, TuiPluginModule, TuiPromptRef } from "@opencode-ai/plugin-v1/tui";
 import { appendFile } from "node:fs/promises";
 import packageJson from "./package.json" with { type: "json" };
 import {
@@ -42,6 +42,8 @@ type Btw = {
   baseCount?: number;
   /** Used only when async prompt seeding cannot provide a concrete boundary. */
   skipInitial?: number;
+  /** Stable ID used to make merge delivery retry-safe before temp cleanup. */
+  mergeMessageID?: string;
 };
 
 type SessionInfo = {
@@ -101,6 +103,8 @@ const isbtw = (value: unknown): value is Btw => {
   if ("baseCount" in value && value.baseCount !== undefined && typeof value.baseCount !== "number")
     return false;
   if ("skipInitial" in value && value.skipInitial !== undefined && typeof value.skipInitial !== "number")
+    return false;
+  if ("mergeMessageID" in value && value.mergeMessageID !== undefined && typeof value.mergeMessageID !== "string")
     return false;
   return true;
 };
@@ -174,6 +178,7 @@ const tui: TuiPlugin = async (api) => {
   const sessionPrompts = new Map<string, TuiPromptRef>();
   let commanddispose: (() => void) | undefined;
   let refreshcommands = () => {};
+  let working = false;
 
   const toast = (input: { variant?: "info" | "success" | "warning" | "error"; title?: string; message: string; duration?: number }) => {
     api.ui.toast(input);
@@ -191,6 +196,19 @@ const tui: TuiPlugin = async (api) => {
       sessionID: currentSessionID ?? null,
     });
     void appendFile(TUI_TOAST_LOG_FILE, `${line}\n`, "utf8").catch(() => undefined);
+  };
+
+  const exclusive = async (task: () => void | Promise<void>) => {
+    if (working) {
+      toast({ variant: "warning", message: "A by-the-way operation is already in progress." });
+      return;
+    }
+    working = true;
+    try {
+      await task();
+    } finally {
+      working = false;
+    }
   };
 
   const logevent = (stage: string, data: Record<string, unknown>) => {
@@ -420,7 +438,7 @@ const tui: TuiPlugin = async (api) => {
           `The original session continued while this ${slash(openname())} session was active. Merge into the original session as it is now?`,
         onConfirm: () => {
           api.ui.dialog.clear();
-          void merge(true);
+          void exclusive(() => merge(true));
         },
         onCancel: () => {
           api.ui.dialog.clear();
@@ -753,12 +771,22 @@ const tui: TuiPlugin = async (api) => {
       const text = mergetext(mergeitems(temp, state));
 
       if (text) {
-        const next = await api.client.session.prompt({
-          sessionID: state.origin,
-          noReply: true,
-          parts: [{ type: "text", text }],
-        });
-        if (next.error) throw next.error;
+        const mergeState = state.mergeMessageID
+          ? state
+          : { ...state, mergeMessageID: `msg_${crypto.randomUUID().replaceAll("-", "")}` };
+        if (!state.mergeMessageID) save(mergeState);
+        const delivered = state.mergeMessageID
+          ? (await messages(state.origin)).some((message) => message.info.id === state.mergeMessageID)
+          : false;
+        if (!delivered) {
+          const next = await api.client.session.prompt({
+            sessionID: state.origin,
+            messageID: mergeState.mergeMessageID,
+            noReply: true,
+            parts: [{ type: "text", text }],
+          });
+          if (next.error) throw next.error;
+        }
       }
 
       api.route.navigate("session", { sessionID: state.origin });
@@ -879,34 +907,34 @@ const tui: TuiPlugin = async (api) => {
     if (command.name === openname()) {
       const text = command.arguments;
       prompt.reset();
-      void enter(text.trim() ? text : undefined);
+      void exclusive(() => enter(text.trim() ? text : undefined));
       return true;
     }
     if (command.name === fastname()) {
       const text = command.arguments;
       prompt.reset();
-      void enterfast(text.trim() ? text : undefined);
+      void exclusive(() => enterfast(text.trim() ? text : undefined));
       return true;
     }
     if (command.name === mergename()) {
       prompt.reset();
-      void merge();
+      void exclusive(() => merge());
       return true;
     }
     if (command.name === endname()) {
       prompt.reset();
-      void end();
+      void exclusive(() => end());
       return true;
     }
     if (command.name === statusname()) {
       prompt.reset();
-      void status();
+      void exclusive(() => status());
       return true;
     }
     if (command.name === EXPERIMENTAL_COMMAND) {
       const text = command.arguments;
       prompt.reset();
-      void enter(text.trim() ? text : undefined);
+      void exclusive(() => enter(text.trim() ? text : undefined));
       return true;
     }
 
@@ -999,7 +1027,7 @@ const tui: TuiPlugin = async (api) => {
     return { sessionID, active, inbtw };
   };
 
-  const selectcommand = (name: string, source: string, run: () => void | Promise<void>) => {
+  const selectcommand = (name: string, source: string, task: () => void | Promise<void>) => {
     const state = load();
     logdiagnostic("command.select", {
       command: name,
@@ -1009,7 +1037,7 @@ const tui: TuiPlugin = async (api) => {
       stateTemp: state?.temp ?? null,
       inBtw: Boolean(currenttemp(current(), state)),
     });
-    return run();
+    return exclusive(task);
   };
 
   refreshcommands = () => {

@@ -9,6 +9,7 @@ export const EXPERIMENTAL_COMMAND = "btw-prompt"
 export const TUI_EVENT_LOG_FILE = "/tmp/opencode-bytheway-event.log"
 export const TUI_TOAST_LOG_FILE = "/tmp/opencode-bytheway-toast.log"
 export const TUI_RUNTIME_MARKER = "tui-btw-v1"
+export const TUI_RUNTIME_MARKER_V2 = "tui-btw-v2"
 
 const env = () => globalThis.process?.env ?? {}
 

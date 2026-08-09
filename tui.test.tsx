@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import packageJson from "./package.json" with { type: "json" }
 import { COMMAND_ENV, PLUGIN_ID } from "./protocol.js"
-import plugin, { indicator, sessiontitle } from "./tui"
+import plugin, { indicator, sessiontitle } from "./v1"
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 const version = packageJson.version
@@ -320,7 +320,7 @@ function setup(input?: {
         async prompt(args: Record<string, unknown>) {
           calls.push("prompt")
           prompted = args
-          expectFlatParams(args, ["sessionID", "noReply", "parts"], ["sessionID"])
+          expectFlatParams(args, ["sessionID", "messageID", "noReply", "parts"], ["sessionID"])
           input?.onPrompt?.(args)
           if (input?.promptError) return { error: input.promptError }
           if (args.sessionID !== originSessionID && Array.isArray(args.parts)) {
@@ -773,13 +773,16 @@ describe("opencode-bytheway tui plugin", () => {
     const forkWait = new Promise<void>((resolve) => {
       releaseFork = resolve
     })
-    const { api, nav, rows, toasts } = setup({ forkWait })
+    const { api, calls, nav, rows, toasts } = setup({ forkWait })
     await plugin.tui(api, undefined, { state: "first" } as any)
 
     const opened = cmd(rows(), "btw.open")?.onSelect()
     await tick()
+    await cmd(rows(), "btw.open")?.onSelect()
 
     expect(toasts).toContainEqual({ variant: "info", message: "Starting /btw session...", duration: 4000 })
+    expect(toasts).toContainEqual({ variant: "warning", message: "A by-the-way operation is already in progress." })
+    expect(calls.filter((call) => call === "fork")).toHaveLength(1)
     expect(nav).toEqual([])
 
     releaseFork()
@@ -1014,7 +1017,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt", "delete"])
-    expect(prompted()).toEqual({
+    expect(prompted()).toMatchObject({
       sessionID: "ses_main",
       noReply: true,
       parts: [
@@ -1029,6 +1032,7 @@ describe("opencode-bytheway tui plugin", () => {
         },
       ],
     })
+    expect(prompted()?.messageID).toMatch(/^msg_/)
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
@@ -1066,7 +1070,7 @@ describe("opencode-bytheway tui plugin", () => {
     await tick()
 
     expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt", "delete"])
-    expect(prompted()).toEqual({
+    expect(prompted()).toMatchObject({
       sessionID: "ses_main",
       noReply: true,
       parts: [
@@ -1081,6 +1085,7 @@ describe("opencode-bytheway tui plugin", () => {
         },
       ],
     })
+    expect(prompted()?.messageID).toMatch(/^msg_/)
     expect(nav.at(-1)).toEqual({ name: "session", params: { sessionID: "ses_main" } })
   })
 
@@ -1135,6 +1140,32 @@ describe("opencode-bytheway tui plugin", () => {
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
     expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
     expect(toasts.at(-1)).toEqual({ variant: "error", message: "prompt failed" })
+  })
+
+  test("does not redeliver a merge whose stable message already reached the origin", async () => {
+    const created = Date.now() + 60_000
+    const originMessages: any[] = []
+    const value = setup({
+      originMessages,
+      tempMessages: [textMessage("msg_assistant", "assistant", "here is the answer", true, created)],
+      promptError: new Error("connection lost after delivery"),
+    })
+    await plugin.tui(value.api, undefined, { state: "first" } as any)
+    await select(value.rows(), "btw.open")
+    await tick()
+    await tick()
+
+    await select(value.rows(), "btw.merge")
+    await tick()
+    const active = value.kv.get("opencode-bytheway.active") as { mergeMessageID: string }
+    originMessages.push(textMessage(active.mergeMessageID, "user", "already merged", false, created + 1))
+
+    await select(value.rows(), "btw.merge")
+    await tick()
+
+    expect(value.calls.filter((call) => call === "prompt")).toHaveLength(1)
+    expect(value.calls.at(-1)).toBe("delete")
+    expect(value.kv.get("opencode-bytheway.active")).toBeUndefined()
   })
 
   test("warns when trying to open /btw from inside the active btw session", async () => {

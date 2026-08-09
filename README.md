@@ -4,14 +4,30 @@ OpenCode plugin that adds temporary "by the way" side-session workflows.
 
 ## Quick notes on Installation / Upgrade
 
+`opencode-bytheway` supports both OpenCode V1 (`opencode`) and the OpenCode V2 beta (`opencode2`) from the same npm package. The hosts use separate configuration files and automatically select the matching runtime entrypoint.
+
+### OpenCode V1
+
 Install or upgrade with OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway@0.7.0 --global --force
+opencode plugin opencode-bytheway@0.8.0-beta.1 --global --force
 ```
 * use this method because tagging @latest does not update, it's a one-shot meaning of 'latest' (by intention of opencode)
 
 * Restart or reload OpenCode after updating so the TUI plugin is reloaded.
+
+### OpenCode V2 beta
+
+Add the package to the global V2 TUI configuration at `~/.config/opencode/cli.json`:
+
+```json
+{
+  "plugins": ["opencode-bytheway@0.8.0-beta.1"]
+}
+```
+
+Restart `opencode2` after changing the package version. V2's plugin API is still beta, so this prerelease pins the OpenCode V2 build it was tested against.
 
 ### name clash
 A plugin package opencode-btw already exists. It is not an attempt to emulate Claude Code 'by the way', it provides persistent steering hints.
@@ -40,23 +56,23 @@ No nesting of btw sessions.
 
 ## Install
 
-Use OpenCode's plugin installer:
+For OpenCode V1, use OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway --global
+opencode plugin opencode-bytheway@0.8.0-beta.1 --global
 ```
 
-The package is a TUI-only plugin. It should be loaded from `tui.json[c]`.
+The package is TUI-only. V1 loads it from `tui.json[c]`; V2 loads it from the `plugins` array in global `cli.json`.
 
 ### Recommended update method
 
 Use `--force` if you need to replace an existing pinned version (including if you used @latest because surprise, this does not update when versions change):
 
 ```bash
-opencode plugin opencode-bytheway@0.7.0 --global --force
+opencode plugin opencode-bytheway@0.8.0-beta.1 --global --force
 ```
 
-OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`. Do not add this package to `opencode.json[c]`; it no longer exports a server plugin.
+OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`. Do not add this package to V1 `opencode.json[c]`; it does not export a server plugin.
 
 Example `tui.jsonc`:
 
@@ -70,7 +86,7 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.7.0"]
+  "plugin": ["opencode-bytheway@0.8.0-beta.1"]
 }
 ```
 
@@ -113,6 +129,7 @@ These logs are disabled by default.
 - `/btw` is for branching off in the same terminal while keeping your main session intact
 - `/btw-merge` carries back only plain user/assistant text from the temporary session; tool calls and subagent details are omitted
 - `/btw-merge` asks for confirmation first if the original session continued while the temporary session was active
+- V2 admits merged context durably with `resume: false`; it is consumed when the original session next resumes because V2 has no immediate visible equivalent of V1's `noReply`
 - `/btw-end` is the clear way back when you want to discard the temporary session without merging text back
 - nested btw sessions are blocked to avoid stacked temporary contexts
 
@@ -122,16 +139,26 @@ These logs are disabled by default.
 bun install --ignore-scripts
 bun run build
 bun run test
-bun run test:integration
+bun run test:integration:v1
+bun run test:integration:v2
 npm pack --dry-run
 ```
 
-For local OpenCode testing, point `tui.json[c]` at this repository path after running `bun run build`.
+For local V1 testing, point `tui.json[c]` at this repository path after running `bun run build`.
 
-After changing `tui.tsx`, run `bun run build` again before reopening or reloading OpenCode so the local plugin uses the updated `dist/tui.js`.
+For local V2 testing, point `~/.config/opencode/cli.json` at the built entrypoint:
 
-`bun run test:integration` launches the real installed `opencode` TUI inside a pseudo-terminal and drives `/btw` from an isolated temporary config. Use it when developing TUI/session behavior; it is intentionally separate from `bun run test` because it depends on the local OpenCode binary and runtime environment.
+```json
+{
+  "plugins": ["file:///home/{USER}/projects/opencode-btw-clean/dist/tui.js"]
+}
+```
+
+After changing `tui.ts`, `v1.tsx`, or `v2.ts`, run `bun run build` again before reopening or reloading OpenCode so the local plugin uses the updated `dist/tui.js`.
+
+`bun run test:integration:v1` launches the real installed `opencode` TUI inside a pseudo-terminal. `bun run test:integration:v2` starts an isolated authenticated V2 server and drives a real `opencode2` TUI. Both are intentionally separate from `bun run test` because they depend on local OpenCode binaries and runtime environments.
 Set `OPENCODE_BTW_OPENCODE_BIN=/absolute/path/to/opencode` to run the integration suite against a specific OpenCode binary.
+Set `OPENCODE_BTW_OPENCODE2_BIN=/absolute/path/to/opencode2` for the V2 suite.
 
 OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`.
 
@@ -158,6 +185,15 @@ Their absolute `file://` paths are machine-specific and should not be committed 
 It uses the same TUI-owned fork flow as `/btw your prompt here`.
 
 ## Changelog
+
+### 0.8.0-beta.1
+
+- Add dual OpenCode V1 and V2 support from the same npm package.
+- Keep the existing V1 TUI implementation and add a native V2 implementation using V2 storage, routing, commands, and session APIs.
+- Add cursor-safe V2 merge boundaries, synthetic fast-context seeding, and an empty-session fallback.
+- Make merge delivery retry-safe and preserve recoverable V2 state when setup or cleanup is interrupted.
+- Add separate real-runtime V1 and V2 integration suites.
+- Tested with OpenCode V1 1.17.12 and OpenCode V2 `0.0.0-next-17055`.
 
 ### 0.7.0
 

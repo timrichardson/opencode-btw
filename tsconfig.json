@@ -7,9 +7,10 @@
     "jsxImportSource": "@opentui/solid",
     "sourceMap": true,
     "types": ["bun"],
+    "allowImportingTsExtensions": true,
     "allowJs": true,
     "checkJs": false,
     "skipLibCheck": true
   },
-  "include": ["tui.tsx", "protocol.js", "scripts/build.ts"]
+  "include": ["tui.ts", "v1.tsx", "v2.ts", "protocol.js", "scripts/build.ts"]
 }

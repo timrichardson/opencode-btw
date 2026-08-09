@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.0-beta.1
+
+- Add dual OpenCode V1 and V2 TUI plugin entrypoints under the existing `opencode-bytheway` package name.
+- Keep the V1 implementation and command behavior while moving it behind a lazy runtime entrypoint.
+- Add a native V2 implementation using durable plugin storage, V2 slash-command arguments, cursor-paginated message history, structured fork boundaries, and V2 session APIs.
+- Handle empty V2 sessions by creating an independent temporary session instead of attempting an invalid empty fork.
+- Add separate real-runtime integration harnesses for OpenCode V1 and OpenCode V2.
+- Fix the V1 integration harness so it confirms session navigation instead of treating control-event publication as navigation completion.
+- Build V1 and V2 into separate lazy chunks so incompatible host dependencies are not eagerly loaded together.
+- Make merge delivery retry-safe in both runtimes and preserve recoverable V2 state across partial setup, transport, and cleanup failures.
+- Typecheck each runtime against its matching OpenCode plugin contract and load both lazy chunks in package contract tests.
+
+Compatibility targets: OpenCode V1 1.17.12 and OpenCode V2 `0.0.0-next-17055`.
+
 ## 0.7.0
 
 - Built against OpenCode 1.17.12.

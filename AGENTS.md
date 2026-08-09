@@ -8,16 +8,18 @@ It provides the `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-promp
 
 ## Important Files
 
-- `tui.tsx`: TUI plugin implementation. This is where the `/btw`, `/btw-merge`, `/btw-end`, `/btw-status`, and `/btw-prompt` slash commands, session state, and navigation live.
+- `tui.ts`: dual-runtime package entrypoint. It lazily selects the V1 or V2 implementation.
+- `v1.tsx`: V1 TUI plugin implementation.
+- `v2.ts`: V2 TUI plugin implementation.
 - `tui.test.tsx`: Bun test coverage for the TUI behavior.
-- `scripts/build.ts`: builds `tui.tsx` into `dist/tui.js`.
-- `dist/tui.js`: built artifact published by the package. Rebuild it after changing `tui.tsx`.
+- `scripts/build.ts`: builds the dual entrypoint and lazy runtime chunks into `dist/`.
+- `dist/tui.js`: built artifact published by the package. Rebuild it after changing either runtime.
 
 ## Runtime Invariants
 
 - Keep the runtime plugin id aligned with the published package name: `opencode-bytheway`.
 - Keep the session storage key aligned too: `opencode-bytheway.active`.
-- If either value changes in `protocol.js` or `tui.tsx`, update tests and rebuild `dist/tui.js` in the same change.
+- If either value changes in `protocol.js`, `v1.tsx`, or `v2.ts`, update tests and rebuild `dist/tui.js` in the same change.
 - Avoid changing slash command names unless the user explicitly asks for a behavior change.
 
 ## Local Development
@@ -47,7 +49,7 @@ Integration tests should run against the target OpenCode binary, optionally via 
 
 ## Editing Guidance
 
-- Prefer small changes in `tui.tsx`; most behavior is intentionally kept in one file.
+- Keep host-specific behavior in `v1.tsx` or `v2.ts`; extract only genuinely shared behavior.
 - Do not add compatibility aliases for old plugin ids or state keys unless there is a concrete migration requirement.
 - Preserve the existing command behavior around blocked nested `/btw` sessions and cleanup of temporary sessions.
 - When changing user-visible copy, update tests if they assert the string.
@@ -56,7 +58,7 @@ Integration tests should run against the target OpenCode binary, optionally via 
 
 After code changes:
 
-1. Run `bun run build` if `tui.tsx` changed.
+1. Run `bun run build` if `tui.ts`, `v1.tsx`, or `v2.ts` changed.
 2. Run `bun run test` for behavioral changes.
 3. Confirm generated `dist/tui.js` reflects any runtime identifier or command changes.
 
@@ -69,6 +71,14 @@ Example OpenCode `tui.json[c]` entry:
 ```json
 {
   "plugin": ["opencode-bytheway@latest"]
+}
+```
+
+Example OpenCode V2 `~/.config/opencode/cli.json` entry:
+
+```json
+{
+  "plugins": ["opencode-bytheway@0.8.0-beta.1"]
 }
 ```
 

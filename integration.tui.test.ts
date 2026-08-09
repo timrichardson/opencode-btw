@@ -44,6 +44,18 @@ function eventsSince(offset: number) {
   });
 }
 
+function toastsSince(offset: number) {
+  return readSince(TOAST_LOG, offset).split("\n").flatMap((line) => {
+    if (!line.trim()) return [];
+    try {
+      const value = JSON.parse(line);
+      return value && typeof value === "object" ? [value as Record<string, unknown>] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function shellquote(value: string) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -99,7 +111,7 @@ function makeSandbox() {
 async function createSession(port: number, project: string) {
   const url = new URL(`http://127.0.0.1:${port}/session`);
   url.searchParams.set("directory", project);
-  const response = await fetch(url, { method: "POST" });
+  const response = await fetch(url, { method: "POST", signal: AbortSignal.timeout(2_000) });
   const text = await response.text().catch(() => "");
   if (!response.ok) return { ok: false, status: response.status, text };
   try {
@@ -115,25 +127,44 @@ async function createSession(port: number, project: string) {
   }
 }
 
-async function selectSession(port: number, project: string, sessionID: string) {
+async function selectSession(
+  tui: ReturnType<typeof startOpencode>,
+  port: number,
+  project: string,
+  sessionID: string,
+) {
   const url = new URL(`http://127.0.0.1:${port}/tui/select-session`);
   url.searchParams.set("directory", project);
+  const toastOffset = bytes(TOAST_LOG);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ sessionID }),
+    signal: AbortSignal.timeout(2_000),
   });
-  return {
+  const result = {
     ok: response.ok,
     status: response.status,
     text: await response.text().catch(() => ""),
   };
+  if (!result.ok) return result;
+
+  // The control endpoint only confirms publication. Startup can race the TUI
+  // event subscription, so prove that this TUI consumed the selection before
+  // using the external session as a test boundary.
+  await Bun.sleep(150);
+  await typePrompt(tui.proc, "/btw-status\r", 15);
+  const selected = await waitFor(
+    () => toastsSince(toastOffset).some((toast) => toast.sessionID === sessionID && String(toast.message).includes("is loaded")),
+    1_200,
+  );
+  return { ...result, ok: Boolean(selected) };
 }
 
 async function sessionMessages(port: number, project: string, sessionID: string) {
   const url = new URL(`http://127.0.0.1:${port}/session/${sessionID}/message`);
   url.searchParams.set("directory", project);
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
   const text = await response.text().catch(() => "");
   if (!response.ok) return { ok: false, status: response.status, text };
   try {
@@ -150,6 +181,7 @@ async function appendPrompt(port: number, project: string, sessionID: string, pr
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ noReply: true, parts: [{ type: "text", text: prompt }] }),
+    signal: AbortSignal.timeout(2_000),
   });
   return {
     ok: response.ok,
@@ -276,7 +308,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
 
     const selected = await waitFor(async () => {
       if (!origin?.sessionID) return undefined;
-      const result = await selectSession(port, sandbox.project, origin.sessionID).catch((error) => ({
+      const result = await selectSession(tui, port, sandbox.project, origin.sessionID).catch((error) => ({
         ok: false,
         status: 0,
         text: String(error),
@@ -289,9 +321,13 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     await typePrompt(tui.proc, "/btw\r");
 
     const result = await waitFor(() => {
+      const parsed = eventsSince(eventOffset);
       const events = readSince(EVENT_LOG, eventOffset);
-      if (events.includes("enter:error")) return { ok: false, events };
-      if (events.includes("enter:fork")) return { ok: true, events };
+      const error = parsed.find((event) => event.stage === "enter:error");
+      if (error) return { ok: false, events };
+      const fork = parsed.find((event) => event.stage === "enter:fork");
+      const complete = parsed.find((event) => event.stage === "enter:fork:complete");
+      if (fork && complete) return { ok: true, events };
       return undefined;
     });
 
@@ -344,7 +380,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
 
     const selected = await waitFor(async () => {
       if (!origin?.sessionID) return undefined;
-      const result = await selectSession(port, sandbox.project, origin.sessionID).catch((error) => ({
+      const result = await selectSession(tui, port, sandbox.project, origin.sessionID).catch((error) => ({
         ok: false,
         status: 0,
         text: String(error),
@@ -433,7 +469,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     if (!origin?.sessionID) return;
 
     const selected = await waitFor(async () => {
-      const result = await selectSession(port, sandbox.project, origin.sessionID).catch((error) => ({
+      const result = await selectSession(tui, port, sandbox.project, origin.sessionID).catch((error) => ({
         ok: false,
         status: 0,
         text: String(error),
@@ -621,7 +657,7 @@ function startOpencode(sandbox: ReturnType<typeof makeSandbox>, port: number) {
     if (!origin?.sessionID) return;
 
     const selected = await waitFor(async () => {
-      const result = await selectSession(port, sandbox.project, origin.sessionID).catch((error) => ({
+      const result = await selectSession(tui, port, sandbox.project, origin.sessionID).catch((error) => ({
         ok: false,
         status: 0,
         text: String(error),
