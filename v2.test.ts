@@ -36,12 +36,17 @@ function session(id: string, updated = 1) {
   };
 }
 
+function active(state: { active: Record<string, unknown> | null }, temp?: string) {
+  if (!state.active) return;
+  if ("version" in state.active) return state.active;
+  return temp ? state.active[temp] : Object.values(state.active)[0];
+}
+
 function setup(input?: {
   route?: string;
   active?: Record<string, unknown> | null;
   messages?: Record<string, Message[]>;
   sessions?: Record<string, ReturnType<typeof session>>;
-  getErrors?: Record<string, unknown>;
   removeError?: Error;
 }) {
   let route = input?.route ? { type: "session", sessionID: input.route } : { type: "home" };
@@ -92,7 +97,6 @@ function setup(input?: {
     client: {
       session: {
         async get({ sessionID }: { sessionID: string }) {
-          if (sessionID in (input?.getErrors ?? {})) throw input?.getErrors?.[sessionID];
           const value = sessions.get(sessionID);
           if (!value) throw { _tag: "SessionNotFoundError", sessionID, message: "Session not found" };
           return value;
@@ -151,18 +155,23 @@ function setup(input?: {
             delivery: "steer",
           };
         },
+        async wait(value: Record<string, unknown>) {
+          calls.push({ name: "wait", input: value });
+        },
         pending: { list: async () => [] },
       },
       message: {
         async list(value: { sessionID: string; limit?: number; order?: "asc" | "desc"; cursor?: string }) {
           calls.push({ name: "messages", input: value });
           const all = [...(messages.get(value.sessionID) ?? [])];
-          const ordered = value.order === "desc" ? all.toReversed() : all;
-          const start = value.cursor ? Number(value.cursor) : 0;
+          const [cursorOrder, cursorStart] = value.cursor?.split(":") ?? [];
+          const order = value.order ?? cursorOrder ?? "asc";
+          const ordered = order === "desc" ? all.toReversed() : all;
+          const start = cursorStart ? Number(cursorStart) : 0;
           const limit = value.limit ?? 50;
           return {
             data: ordered.slice(start, start + limit),
-            cursor: { next: start + limit < ordered.length ? String(start + limit) : undefined },
+            cursor: { next: start + limit < ordered.length ? `${order}:${start + limit}` : undefined },
           };
         },
       },
@@ -189,7 +198,7 @@ describe("opencode-bytheway V2 plugin", () => {
     await value.plugin.open();
 
     expect(value.calls.some((call) => call.name === "fork")).toBe(false);
-    expect(value.state.active).toMatchObject({ origin: "ses_origin", temp: "ses_created_1", kind: "empty" });
+    expect(active(value.state, "ses_created_1")).toMatchObject({ origin: "ses_origin", temp: "ses_created_1", kind: "empty" });
     expect(value.route()).toEqual({ type: "session", sessionID: "ses_created_1" });
   });
 
@@ -205,13 +214,13 @@ describe("opencode-bytheway V2 plugin", () => {
       sessionID: "ses_origin",
       boundary: { type: "through" },
     });
-    expect(value.state.active).toMatchObject({
+    expect(active(value.state, "ses_created_1")).toMatchObject({
       kind: "fork",
       baselineMessageID: "msg_cloned_1",
     });
   });
 
-  test("admits direct slash arguments and stores their durable input boundary", async () => {
+  test("waits for the origin and admits direct slash arguments only to the temp", async () => {
     const value = setup({
       route: "ses_origin",
       messages: { ses_origin: [user("msg_origin", "question"), assistant("msg_answer", "answer")] },
@@ -224,7 +233,21 @@ describe("opencode-bytheway V2 plugin", () => {
       text: "side question",
       metadata: { "opencode-bytheway": { type: "initial", origin: "ses_origin", version: 2 } },
     });
-    expect(value.state.active).toMatchObject({ initialPromptID: "msg_admitted_1" });
+    expect(value.calls.some((call) => call.name === "wait" && call.input?.sessionID === "ses_origin")).toBe(true);
+  });
+
+  test("forks all populated context for a direct prompt without a completed assistant", async () => {
+    const value = setup({
+      route: "ses_origin",
+      messages: { ses_origin: [user("msg_origin", "unanswered question")] },
+    });
+
+    await value.plugin.open("side question");
+
+    expect(value.calls.find((call) => call.name === "fork")?.input).toMatchObject({
+      sessionID: "ses_origin",
+      boundary: { type: "through" },
+    });
   });
 
   test("fast mode seeds bounded synthetic context without resuming", async () => {
@@ -241,15 +264,14 @@ describe("opencode-bytheway V2 plugin", () => {
     expect(seeded).toMatchObject({ sessionID: "ses_created_1", resume: false });
     expect(String(seeded?.text)).not.toContain("user 0");
     expect(String(seeded?.text)).toContain("assistant 13");
-    expect(value.state.active).toMatchObject({ kind: "fast" });
+    expect(active(value.state, "ses_created_1")).toMatchObject({ kind: "fast" });
   });
 
   test("merge paginates, stops at the baseline, and excludes non-text records", async () => {
-    const copied = Array.from({ length: 205 }, (_, index) => synthetic(`msg_copy_${index}`, `copy ${index}`, index));
+    const side = Array.from({ length: 205 }, (_, index) => user(`msg_side_${index}`, `side ${index}`, index + 2));
     const tempMessages = [
-      ...copied,
-      user("msg_baseline", "copied origin", 206),
-      user("msg_side_user", "side question", 207),
+      user("msg_baseline", "copied origin", 1),
+      ...side,
       assistant("msg_side_assistant", "side answer", 208),
       synthetic("msg_hidden", "hidden", 209),
     ];
@@ -272,15 +294,15 @@ describe("opencode-bytheway V2 plugin", () => {
     const merged = value.calls.find((call) => call.name === "prompt")?.input;
     expect(merged).toMatchObject({ sessionID: "ses_origin", resume: false });
     expect(merged?.id).toMatch(/^msg_/);
-    expect(String(merged?.text)).toContain("side question");
+    expect(String(merged?.text)).toContain("side 0");
     expect(String(merged?.text)).toContain("side answer");
     expect(String(merged?.text)).not.toContain("copied origin");
     expect(String(merged?.text)).not.toContain("hidden");
-    expect(value.calls.filter((call) => call.name === "messages").length).toBe(1);
-    expect(value.state.active).toBeNull();
+    expect(value.calls.filter((call) => call.name === "messages").length).toBe(2);
+    expect(active(value.state, "ses_temp")).toBeUndefined();
   });
 
-  test("recovers an initial prompt boundary from projected metadata", async () => {
+  test("merges the initial direct prompt and its answer", async () => {
     const value = setup({
       route: "ses_temp",
       active: {
@@ -304,10 +326,11 @@ describe("opencode-bytheway V2 plugin", () => {
     await value.plugin.merge();
 
     const merged = String(value.calls.find((call) => call.name === "prompt")?.input?.text);
+    expect(merged).toContain("initial question");
+    expect(merged).toContain("initial answer");
     expect(merged).toContain("follow-up question");
     expect(merged).toContain("follow-up answer");
-    expect(merged).not.toContain("initial question");
-    expect(merged).not.toContain("initial answer");
+    expect(value.calls.some((call) => call.name === "wait" && call.input?.sessionID === "ses_temp")).toBe(true);
   });
 
   test("reuses the stable merge admission ID when cleanup is retried", async () => {
@@ -320,18 +343,20 @@ describe("opencode-bytheway V2 plugin", () => {
         originUpdated: 1,
         kind: "empty",
         mergeMessageID: "msg_stable_merge",
+        mergeText: "original merge payload",
       },
       sessions: { ses_origin: session("ses_origin"), ses_temp: session("ses_temp") },
       messages: {
-        ses_temp: [user("msg_side", "side question")],
+        ses_temp: [user("msg_side", "side question"), user("msg_later", "later change")],
       },
     });
 
     await value.plugin.merge();
 
     expect(value.calls.find((call) => call.name === "prompt")?.input?.id).toBe("msg_stable_merge");
+    expect(value.calls.find((call) => call.name === "prompt")?.input?.text).toBe("original merge payload");
     expect(value.calls.some((call) => call.name === "remove")).toBe(true);
-    expect(value.state.active).toBeNull();
+    expect(active(value.state, "ses_temp")).toBeUndefined();
   });
 
   test("a missing merge baseline fails closed and preserves the temp session", async () => {
@@ -353,7 +378,7 @@ describe("opencode-bytheway V2 plugin", () => {
 
     expect(value.calls.some((call) => call.name === "prompt")).toBe(false);
     expect(value.calls.some((call) => call.name === "remove")).toBe(false);
-    expect(value.state.active).not.toBeNull();
+    expect(active(value.state, "ses_temp")).toBeDefined();
     expect(value.toasts.at(-1)?.message).toContain("merge boundary");
   });
 
@@ -373,12 +398,12 @@ describe("opencode-bytheway V2 plugin", () => {
 
     await value.plugin.end();
 
-    expect(value.state.active).not.toBeNull();
+    expect(active(value.state, "ses_temp")).toBeDefined();
     expect(value.route()).toEqual({ type: "session", sessionID: "ses_temp" });
     expect(value.toasts.at(-1)?.message).toBe("still busy");
   });
 
-  test("preserves active state when session validation fails transiently", async () => {
+  test("does not hijack an active side session from another origin", async () => {
     const value = setup({
       route: "ses_origin",
       active: {
@@ -389,33 +414,33 @@ describe("opencode-bytheway V2 plugin", () => {
         kind: "empty",
       },
       sessions: { ses_origin: session("ses_origin"), ses_temp: session("ses_temp") },
-      getErrors: { ses_temp: new Error("network unavailable") },
     });
 
     await value.plugin.open();
 
-    expect(value.state.active).not.toBeNull();
-    expect(value.calls.some((call) => call.name === "create")).toBe(false);
-    expect(value.toasts.at(-1)?.message).toBe("network unavailable");
+    expect(active(value.state, "ses_temp")).toBeDefined();
+    expect(active(value.state, "ses_created_1")).toMatchObject({ origin: "ses_origin", temp: "ses_created_1" });
+    expect(value.route()).toEqual({ type: "session", sessionID: "ses_created_1" });
   });
 
-  test("removes a surviving temp before clearing a missing origin", async () => {
+  test("preserves a side session from another origin while opening a new one", async () => {
     const value = setup({
       route: "ses_current",
       active: {
         version: 2,
-        origin: "ses_missing",
+        origin: "ses_other",
         temp: "ses_temp",
         originUpdated: 1,
         kind: "empty",
       },
-      sessions: { ses_current: session("ses_current"), ses_temp: session("ses_temp") },
+      sessions: { ses_current: session("ses_current"), ses_other: session("ses_other"), ses_temp: session("ses_temp") },
     });
 
     await value.plugin.open();
 
-    expect(value.calls.find((call) => call.name === "remove")?.input).toEqual({ sessionID: "ses_temp" });
-    expect(value.state.active).toMatchObject({ origin: "ses_current", temp: "ses_created_1" });
+    expect(value.calls.some((call) => call.name === "remove")).toBe(false);
+    expect(active(value.state, "ses_temp")).toMatchObject({ origin: "ses_other" });
+    expect(active(value.state, "ses_created_1")).toMatchObject({ origin: "ses_current", temp: "ses_created_1" });
   });
 
   test("registers native argument-bearing V2 slash commands", () => {

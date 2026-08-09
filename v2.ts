@@ -1,6 +1,8 @@
 import type { Plugin } from "@opencode-ai/plugin/tui";
 import { appendFile } from "node:fs/promises";
+import { createComponent } from "solid-js";
 import packageJson from "./package.json" with { type: "json" };
+import { BtwIndicator } from "./v2-indicator.js";
 import {
   EXPERIMENTAL_COMMAND,
   PLUGIN_ID,
@@ -29,18 +31,18 @@ type Active = {
   originUpdated: number;
   kind: "fork" | "fast" | "empty";
   baselineMessageID?: string;
-  initialPromptID?: string;
   mergeMessageID?: string;
+  mergeText?: string;
 };
 
 type State = {
-  active: Active | null;
+  active: Record<string, Active> | Active | null;
 };
 
 const RECENT_CONTEXT_LIMIT = 12;
 
 export function createV2(context: Context) {
-  const [state, updateState] = context.storage.store<State>("active", { initial: { active: null } });
+  const [state, updateState] = context.storage.store<State>("active", { initial: { active: {} } });
   let working = false;
 
   const current = () => {
@@ -48,7 +50,18 @@ export function createV2(context: Context) {
     if (route.type === "session") return route.sessionID;
   };
 
-  const inside = () => state.active?.temp === current();
+  const activeRecords = () => {
+    if (!state.active) return {};
+    if (isActive(state.active)) return { [state.active.temp]: state.active };
+    return state.active;
+  };
+
+  const inside = () => {
+    const sessionID = current();
+    return Boolean(sessionID && activeRecords()[sessionID]);
+  };
+
+  const isTemp = (sessionID: string) => Boolean(activeRecords()[sessionID]);
 
   const log = (stage: string, data: Record<string, unknown> = {}) => {
     if (!diagnosticsenabled()) return;
@@ -83,9 +96,14 @@ export function createV2(context: Context) {
     void appendFile(TUI_TOAST_LOG_FILE, `${line}\n`, "utf8").catch(() => undefined);
   };
 
-  const save = (active: Active | null) =>
+  const save = (active: Active) =>
     updateState((draft) => {
-      draft.active = active;
+      draft.active = { ...activeRecords(), [active.temp]: active };
+    });
+
+  const clear = (temp: string) =>
+    updateState((draft) => {
+      draft.active = Object.fromEntries(Object.entries(activeRecords()).filter(([sessionID]) => sessionID !== temp));
     });
 
   const run = async (task: () => Promise<void>) => {
@@ -194,12 +212,16 @@ export function createV2(context: Context) {
   };
 
   const prepare = async (prompt?: string) => {
-    const active = await requireAvailable();
-    if (!active) return;
+    if (!requireAvailable()) return;
     const source = await origin();
     log("v2:enter:start", { originSessionID: source.session.id, prompt: Boolean(prompt) });
     toast({ message: `Starting ${slash(openname())} session...` });
-    const boundary = prompt ? await cutoff(source.session.id) : (await latest(source.session.id)) ? { type: "through" as const } : undefined;
+    if (prompt) await context.client.session.wait({ sessionID: source.session.id });
+    const boundary = prompt
+      ? (await cutoff(source.session.id)) ?? ((await latest(source.session.id)) ? { type: "through" as const } : undefined)
+      : (await latest(source.session.id))
+        ? { type: "through" as const }
+        : undefined;
     const temp = boundary
       ? await context.client.session.fork({ sessionID: source.session.id, boundary })
       : await createTemp(source.session);
@@ -221,17 +243,15 @@ export function createV2(context: Context) {
       toast({ message: `${slash(openname())} session active. Run ${slash(endname())} to return.` });
       return;
     }
-    const admitted = await context.client.session.prompt({
+    await context.client.session.prompt({
       sessionID: temp.id,
       text: prompt,
       metadata: { [PLUGIN_ID]: { type: "initial", origin: source.session.id, version: 2 } },
     });
-    await save({ ...next, initialPromptID: admitted.id });
   };
 
   const prepareFast = async () => {
-    const active = await requireAvailable();
-    if (!active) return;
+    if (!requireAvailable()) return;
     const source = await origin();
     log("v2:fast:start", { originSessionID: source.session.id });
     toast({ message: `Starting ${slash(fastname())} session...` });
@@ -264,36 +284,17 @@ export function createV2(context: Context) {
     toast({ message: `${slash(fastname())} session active. Run ${slash(endname())} to return.` });
   };
 
-  const requireAvailable = async () => {
-    const active = state.active;
-    if (!active) return true;
-    const sessions = await Promise.allSettled([get(active.origin), get(active.temp)]);
-    const originMissing = sessions[0].status === "rejected" && sessionNotFound(sessions[0].reason);
-    const tempMissing = sessions[1].status === "rejected" && sessionNotFound(sessions[1].reason);
-    if (tempMissing) {
-      await save(null);
-      return true;
-    }
-    if (originMissing) {
-      await context.client.session.remove({ sessionID: active.temp });
-      await save(null);
-      return true;
-    }
-    const failed = sessions.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") throw failed.reason;
-    if (current() !== active.temp) context.ui.router.navigate({ type: "session", sessionID: active.temp });
-    toast({ variant: "warning", message: `${slash(openname())} session is already active.` });
+  const requireAvailable = () => {
+    if (!inside()) return true;
+    toast({ variant: "warning", message: `Already inside a ${slash(openname())} session.` });
     return false;
   };
 
   const requireTemp = () => {
-    const active = state.active;
+    const sessionID = current();
+    const active = sessionID ? activeRecords()[sessionID] : undefined;
     if (!active) {
       toast({ variant: "warning", message: `No active ${slash(openname())} session.` });
-      return;
-    }
-    if (current() !== active.temp) {
-      toast({ variant: "warning", message: `${slash(openname())} commands must be run from the temporary session.` });
       return;
     }
     return active;
@@ -315,28 +316,10 @@ export function createV2(context: Context) {
     throw new Error("The by-the-way merge boundary is no longer available; nothing was merged.");
   };
 
-  const mergeMessages = async (active: Active) => {
-    const messages = await afterBaseline(active);
-    const initial = messages.findIndex(
-      (message) => message.id === active.initialPromptID || pluginMetadata(message.metadata, "initial"),
-    );
-    if (initial < 0 && !active.initialPromptID) {
-      const pending = await context.client.session.pending.list({ sessionID: active.temp });
-      if (pending.some((item) => item.type === "user" && pluginMetadata(item.data.metadata, "initial"))) return [];
-      return messages;
-    }
-    if (initial < 0) {
-      const pending = await context.client.session.pending.list({ sessionID: active.temp });
-      if (pending.some((item) => item.id === active.initialPromptID)) return [];
-      throw new Error("The initial by-the-way prompt boundary is no longer available; nothing was merged.");
-    }
-    const next = messages.findIndex((message, index) => index > initial && message.type === "user");
-    return next < 0 ? [] : messages.slice(next);
-  };
-
   const merge = async () => {
     const active = requireTemp();
     if (!active) return;
+    await context.client.session.wait({ sessionID: active.temp });
     const origin = await get(active.origin);
     if (
       origin.time.updated > active.originUpdated &&
@@ -347,10 +330,10 @@ export function createV2(context: Context) {
       }))
     )
       return;
-    const value = mergeText(await mergeMessages(active));
+    const value = active.mergeText ?? mergeText(await afterBaseline(active));
     if (value) {
       const mergeMessageID = active.mergeMessageID ?? `msg_${crypto.randomUUID().replaceAll("-", "")}`;
-      if (!active.mergeMessageID) await save({ ...active, mergeMessageID });
+      if (!active.mergeMessageID || !active.mergeText) await save({ ...active, mergeMessageID, mergeText: value });
       await context.client.session.prompt({
         id: mergeMessageID,
         sessionID: active.origin,
@@ -366,17 +349,21 @@ export function createV2(context: Context) {
       });
     }
     await context.client.session.remove({ sessionID: active.temp });
-    await save(null);
+    await clear(active.temp);
     context.ui.router.navigate({ type: "session", sessionID: active.origin });
     log("v2:merge:complete", { originSessionID: active.origin, tempSessionID: active.temp, merged: Boolean(value) });
-    toast({ message: "Merged back into the original session as it is now." });
+    toast({
+      message: value
+        ? "Merged back into the original session as it is now."
+        : "No new text to merge. Returned to the original session as it is now.",
+    });
   };
 
   const end = async () => {
     const active = requireTemp();
     if (!active) return;
     await context.client.session.remove({ sessionID: active.temp });
-    await save(null);
+    await clear(active.temp);
     context.ui.router.navigate({ type: "session", sessionID: active.origin });
     log("v2:end:complete", { originSessionID: active.origin, tempSessionID: active.temp });
     toast({ message: `Ended ${slash(openname())} session.` });
@@ -462,6 +449,7 @@ export function createV2(context: Context) {
   log("v2:init", { pluginID: PLUGIN_ID });
 
   return {
+    active: isTemp,
     commands,
     end: () => run(end),
     merge: () => run(merge),
@@ -475,6 +463,14 @@ export function createV2(context: Context) {
 
 export const setup = (async (context) => {
   const plugin = createV2(context);
+  context.ui.slot("sidebar.content", (props) =>
+    createComponent(BtwIndicator, {
+      context,
+      get active() {
+        return plugin.active(props.sessionID);
+      },
+    }),
+  );
   return context.ui.slot("app", plugin.mount);
 }) satisfies Plugin.Definition["setup"];
 
@@ -523,18 +519,6 @@ function mergeText(messages: Message[]) {
   ].join("\n");
 }
 
-function pluginMetadata(metadata: unknown, type: "initial" | "merge", temp?: string) {
-  if (!metadata || typeof metadata !== "object") return false;
-  const value = (metadata as Record<string, unknown>)[PLUGIN_ID];
-  if (!value || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  return record.type === type && (temp === undefined || record.temp === temp);
-}
-
-function sessionNotFound(error: unknown) {
-  return Boolean(error && typeof error === "object" && "_tag" in error && error._tag === "SessionNotFoundError");
-}
-
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (!error || typeof error !== "object") return "Request failed.";
@@ -543,6 +527,10 @@ function errorMessage(error: unknown) {
     if (typeof error.data.message === "string") return error.data.message;
   }
   return "Request failed.";
+}
+
+function isActive(value: Record<string, Active> | Active): value is Active {
+  return value.version === 2 && typeof value.origin === "string" && typeof value.temp === "string";
 }
 
 export const internals = {

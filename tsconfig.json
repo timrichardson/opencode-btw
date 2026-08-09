@@ -12,5 +12,5 @@
     "checkJs": false,
     "skipLibCheck": true
   },
-  "include": ["tui.ts", "v1.tsx", "v2.ts", "protocol.js", "scripts/build.ts"]
+  "include": ["tui.ts", "v1.tsx", "v2.ts", "v2-indicator.tsx", "protocol.js", "scripts/build.ts"]
 }

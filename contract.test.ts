@@ -11,6 +11,7 @@ test("built package preserves both runtime entrypoints", async () => {
   const built = (await import(`./dist/tui.js?test=${Date.now()}`)).default;
   const v1Layers: Array<{ commands?: Array<{ name: string }> }> = [];
   const v2Layers: Array<() => { commands: Array<{ id: string }> }> = [];
+  const v2Slots: string[] = [];
   const v2Disposed = { value: false };
 
   expect(built.id).toBe("opencode-bytheway");
@@ -34,8 +35,9 @@ test("built package preserves both runtime entrypoints", async () => {
     },
     ui: {
       router: { current: () => ({ type: "home" }) },
-      slot: (_name: string, mount: () => unknown) => {
-        mount();
+      slot: (name: string, mount: () => unknown) => {
+        v2Slots.push(name);
+        if (name === "app") mount();
         return () => {
           v2Disposed.value = true;
         };
@@ -45,6 +47,7 @@ test("built package preserves both runtime entrypoints", async () => {
 
   expect(v1Layers.flatMap((layer) => layer.commands ?? []).some((command) => command.name === "btw-status")).toBe(true);
   expect(v2Layers.flatMap((layer) => layer().commands).some((command) => command.id === "btw.status")).toBe(true);
+  expect(v2Slots).toContain("sidebar.content");
   expect(dispose).toBeFunction();
   dispose();
   expect(v2Disposed.value).toBe(true);

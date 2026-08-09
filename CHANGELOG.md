@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0-beta.3
+
+- Document simultaneous V1/V2 configuration and the safe process for retiring the V1 configuration after moving to V2 only.
+- Preserve the complete initial `/btw <prompt>` exchange when merging in V2 and wait for active generation to finish before reading or deleting the temporary session.
+- Scope V2 active state by temporary session so multiple TUI instances do not navigate into or block one another's side sessions.
+- Preserve the admitted merge payload for exact retry reconciliation, retain context for direct prompts without a completed assistant response, and test merge pagination across a real cursor boundary.
+- Show a persistent V2 sidebar indicator while the current session is an active `/btw` side session.
+- Run TypeScript validation in CI.
+
+Compatibility targets: OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17055`.
+
 ## 0.8.0-beta.2
 
 - Add dual OpenCode V1 and V2 TUI plugin entrypoints under the existing `opencode-bytheway` package name.
@@ -9,10 +20,10 @@
 - Add separate real-runtime integration harnesses for OpenCode V1 and OpenCode V2.
 - Fix the V1 integration harness so it confirms session navigation instead of treating control-event publication as navigation completion.
 - Build V1 and V2 into separate lazy chunks so incompatible host dependencies are not eagerly loaded together.
-- Make merge delivery retry-safe in both runtimes and preserve recoverable V2 state across partial setup, transport, and cleanup failures.
+- Make merge delivery retry-safe in both runtimes and preserve recoverable V2 state across transport and cleanup failures after the temporary session has been recorded.
 - Typecheck each runtime against its matching OpenCode plugin contract and load both lazy chunks in package contract tests.
 
-Compatibility targets: OpenCode V1 1.17.12 and OpenCode V2 `0.0.0-next-17055`.
+Compatibility targets: OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17055`.
 
 ## 0.7.0
 

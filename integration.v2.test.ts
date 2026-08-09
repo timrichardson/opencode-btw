@@ -390,6 +390,12 @@ async function ready(tui: ReturnType<typeof startTui>, sessionID: string, eventO
       ),
     );
     expect(merged).toMatchObject({ merged: false });
+    const emptyToast = await waitFor(() =>
+      records(TUI_TOAST_LOG_FILE, toastOffset).some((toast) =>
+        String(toast.message).includes("No new text to merge"),
+      ),
+    );
+    expect(emptyToast).toBe(true);
   } finally {
     await tui.stop();
     await server.stop();

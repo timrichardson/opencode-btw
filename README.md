@@ -4,14 +4,14 @@ OpenCode plugin that adds temporary "by the way" side-session workflows.
 
 ## Quick notes on Installation / Upgrade
 
-`opencode-bytheway` supports both OpenCode V1 (`opencode`) and the OpenCode V2 beta (`opencode2`) from the same npm package. The hosts use separate configuration files and automatically select the matching runtime entrypoint.
+`opencode-bytheway` supports both OpenCode V1 (`opencode`) and the OpenCode V2 beta (`opencode2`) from the same npm package. The hosts use separate TUI configuration files and automatically select the matching runtime entrypoint. They still share the usual global and project `opencode.json(c)` locations.
 
 ### OpenCode V1
 
 Install or upgrade with OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.2 --global --force
+opencode plugin opencode-bytheway@0.8.0-beta.3 --global --force
 ```
 * use this method because tagging @latest does not update, it's a one-shot meaning of 'latest' (by intention of opencode)
 
@@ -23,11 +23,50 @@ Add the package to the global V2 TUI configuration at `~/.config/opencode/cli.js
 
 ```json
 {
-  "plugins": ["opencode-bytheway@0.8.0-beta.2"]
+  "plugins": ["opencode-bytheway@0.8.0-beta.3"]
 }
 ```
 
 Restart `opencode2` after changing the package version. V2's plugin API is still beta, so this prerelease pins the OpenCode V2 build it was tested against.
+
+### Keep V1 and V2 working side by side
+
+V1 and V2 can use the same `opencode-bytheway` release at the same time. They read different global TUI configuration files and select different exports from the package:
+
+- V1 (`opencode`) reads `~/.config/opencode/tui.json` or `tui.jsonc` and uses `plugin`.
+- V2 (`opencode2`) reads `~/.config/opencode/cli.json` and uses `plugins`.
+
+Pin the same package version in both files. For example, use this for V1 in `~/.config/opencode/tui.jsonc`:
+
+```jsonc
+{
+  "plugin": ["opencode-bytheway@0.8.0-beta.3"]
+}
+```
+
+And use this for V2 in `~/.config/opencode/cli.json`:
+
+```json
+{
+  "plugins": ["opencode-bytheway@0.8.0-beta.3"]
+}
+```
+
+Keep unrelated settings already present in either file. Installing the V1 entry with `opencode plugin ... --global` does not replace the V2 `cli.json` entry; likewise, changing `cli.json` does not configure V1.
+
+If `cli.json` does not exist when V2 first starts, V2 may create it by migrating supported settings from the global V1 `tui.json` and legacy TUI state. It leaves the V1 files unchanged so both versions can continue to run. This migration happens only once, so after `cli.json` exists, make subsequent plugin-version changes in both files when retaining side-by-side support.
+
+### Retire the V1 configuration after moving to V2 only
+
+Do this only after V2 is working:
+
+1. Confirm `~/.config/opencode/cli.json` contains the `opencode-bytheway` entry and any TUI settings you still need.
+2. Restart `opencode2` and run `/btw-status`, then open and end one side session with `/btw` and `/btw-end`.
+3. Remove only the `opencode-bytheway` item from the `plugin` array in `~/.config/opencode/tui.json` or `tui.jsonc`.
+4. Check `~/.config/opencode/opencode.json` or `opencode.jsonc` and remove a stale V1 `plugin` entry for `opencode-bytheway` if an older release or installer added one. Current releases are TUI-only and should not be configured there for V1.
+5. If the V1 `tui.json(c)` contains no other plugins or settings you want to keep, archive or delete it. Do not delete it before copying wanted settings into `cli.json`: V2 does not rerun automatic migration after `cli.json` has been created.
+
+V1 has no plugin-uninstall subcommand. Removing its config entry disables the plugin; an unused cached package can safely remain. The V2 `cli.json` entry is independent and continues to load the V2 runtime.
 
 ### name clash
 A plugin package opencode-btw already exists. It is not an attempt to emulate Claude Code 'by the way', it provides persistent steering hints.
@@ -59,7 +98,7 @@ No nesting of btw sessions.
 For OpenCode V1, use OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.2 --global
+opencode plugin opencode-bytheway@0.8.0-beta.3 --global
 ```
 
 The package is TUI-only. V1 loads it from `tui.json[c]`; V2 loads it from the `plugins` array in global `cli.json`.
@@ -69,10 +108,10 @@ The package is TUI-only. V1 loads it from `tui.json[c]`; V2 loads it from the `p
 Use `--force` if you need to replace an existing pinned version (including if you used @latest because surprise, this does not update when versions change):
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.2 --global --force
+opencode plugin opencode-bytheway@0.8.0-beta.3 --global --force
 ```
 
-OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`. Do not add this package to V1 `opencode.json[c]`; it does not export a server plugin.
+OpenCode V1 1.18.15 loads TUI plugins from `tui.json[c]`. Do not add this package to V1 `opencode.json[c]`; it does not export a server plugin.
 
 Example `tui.jsonc`:
 
@@ -86,7 +125,7 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.8.0-beta.2"]
+  "plugin": ["opencode-bytheway@0.8.0-beta.3"]
 }
 ```
 
@@ -160,7 +199,7 @@ After changing `tui.ts`, `v1.tsx`, or `v2.ts`, run `bun run build` again before 
 Set `OPENCODE_BTW_OPENCODE_BIN=/absolute/path/to/opencode` to run the integration suite against a specific OpenCode binary.
 Set `OPENCODE_BTW_OPENCODE2_BIN=/absolute/path/to/opencode2` for the V2 suite.
 
-OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`.
+OpenCode V1 1.18.15 loads TUI plugins from `tui.json[c]`.
 
 Example `tui.json` entry for the slash commands:
 
@@ -186,14 +225,23 @@ It uses the same TUI-owned fork flow as `/btw your prompt here`.
 
 ## Changelog
 
+### 0.8.0-beta.3
+
+- Preserve complete initial V2 `/btw <prompt>` exchanges and wait for active generation before merging or ending.
+- Scope V2 active state by temporary session and preserve admitted merge payloads for exact retry reconciliation.
+- Retain direct-prompt context without a completed assistant response and test merge pagination across a real cursor boundary.
+- Show a persistent V2 sidebar indicator while the current session is an active `/btw` side session.
+- Document simultaneous V1/V2 configuration and run TypeScript validation in CI.
+- Tested with OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17055`.
+
 ### 0.8.0-beta.2
 
 - Add dual OpenCode V1 and V2 support from the same npm package.
 - Keep the existing V1 TUI implementation and add a native V2 implementation using V2 storage, routing, commands, and session APIs.
 - Add cursor-safe V2 merge boundaries, synthetic fast-context seeding, and an empty-session fallback.
-- Make merge delivery retry-safe and preserve recoverable V2 state when setup or cleanup is interrupted.
+- Make merge delivery retry-safe and preserve recoverable V2 state across transport and cleanup failures after the temporary session has been recorded.
 - Add separate real-runtime V1 and V2 integration suites.
-- Tested with OpenCode V1 1.17.12 and OpenCode V2 `0.0.0-next-17055`.
+- Tested with OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17055`.
 
 ### 0.7.0
 
