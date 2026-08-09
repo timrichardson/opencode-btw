@@ -84,6 +84,8 @@ function setup(input?: {
   childSessions?: any[]
   deleteError?: Error
   deleteReject?: Error
+  abortError?: Error
+  abortReject?: Error
   promptError?: Error
   promptAsyncError?: Error
   promptResult?: unknown
@@ -337,6 +339,13 @@ function setup(input?: {
           if (input?.promptAsyncError) return { error: input.promptAsyncError }
           return { data: undefined }
         },
+        async abort(args: Record<string, unknown>) {
+          calls.push("abort")
+          expectFlatParams(args, ["sessionID"], ["sessionID"])
+          if (input?.abortReject) throw input.abortReject
+          if (input?.abortError) return { error: input.abortError }
+          return { data: true }
+        },
         async delete(args: Record<string, unknown>) {
           calls.push("delete")
           expectFlatParams(args, ["sessionID"], ["sessionID"])
@@ -501,6 +510,35 @@ describe("opencode-bytheway tui plugin", () => {
       sessionID: "ses_btw",
       parts: [{ type: "text", text: "investigate this" }],
     })
+  })
+
+  test("aborts an active direct-prompt session before /btw-end deletes it", async () => {
+    const value = setup()
+    await plugin.tui(value.api, undefined, { state: "first" } as any)
+
+    const layer = value.keymapLayers.find((item) => item?.bindings?.some((binding: any) => binding.key === "return"))
+    const prompt: any = {
+      focused: true,
+      current: { input: "/btw testing", parts: [] },
+      set() {},
+      reset() {
+        prompt.current.input = ""
+      },
+      blur() {},
+      focus() {},
+      submit() {},
+    }
+    value.slot("session_prompt").slots.session_prompt({}, { session_id: "ses_main" }).props.ref(prompt)
+
+    expect(layer.commands[0].run()).toBe(true)
+    for (let i = 0; i < 5; i++) await tick()
+    await select(value.rows(), "btw.end")
+    await tick()
+
+    expect(value.calls).toContain("promptAsync")
+    expect(value.calls.indexOf("abort")).toBeGreaterThan(value.calls.indexOf("promptAsync"))
+    expect(value.calls.indexOf("delete")).toBeGreaterThan(value.calls.indexOf("abort"))
+    expect(value.kv.get("opencode-bytheway.active")).toBeUndefined()
   })
 
   test("registers a sidebar indicator slot", async () => {
@@ -1016,7 +1054,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "get", "abort", "messages", "prompt", "delete"])
     expect(prompted()).toMatchObject({
       sessionID: "ses_main",
       noReply: true,
@@ -1069,7 +1107,7 @@ describe("opencode-bytheway tui plugin", () => {
     views.at(-1)?.props?.onConfirm()
     await tick()
 
-    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "get", "abort", "messages", "prompt", "delete"])
     expect(prompted()).toMatchObject({
       sessionID: "ses_main",
       noReply: true,
@@ -1108,7 +1146,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "get", "abort", "messages", "delete"])
     expect(prompted()).toBeUndefined()
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
@@ -1119,6 +1157,25 @@ describe("opencode-bytheway tui plugin", () => {
       variant: "info",
       message: "No new text to merge. Returned to the original session as it is now.",
     })
+  })
+
+  test("does not read, merge, or delete when stopping the temp session fails", async () => {
+    const value = setup({
+      abortError: new Error("still stopping"),
+      tempMessages: [textMessage("msg_assistant", "assistant", "partial answer")],
+    })
+    await plugin.tui(value.api, undefined, { state: "first" } as any)
+
+    await select(value.rows(), "btw.open")
+    await tick()
+    await tick()
+    await select(value.rows(), "btw.merge")
+    await tick()
+
+    expect(value.calls).toEqual(["list", "fork", "update", "get", "abort"])
+    expect(value.nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expectFastState(value.kv.get("opencode-bytheway.active"), "ses_main")
+    expect(value.toasts.at(-1)).toEqual({ variant: "error", message: "still stopping" })
   })
 
   test("keeps the active btw session when merge append fails", async () => {
@@ -1136,7 +1193,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.merge")
     await tick()
 
-    expect(calls).toEqual(["list", "fork", "update", "get", "messages", "prompt"])
+    expect(calls).toEqual(["list", "fork", "update", "get", "abort", "messages", "prompt"])
     expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
     expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
     expect(toasts.at(-1)).toEqual({ variant: "error", message: "prompt failed" })
@@ -1192,12 +1249,50 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["list", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "abort", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
     ])
     expect(kv.get("opencode-bytheway.active")).toBeUndefined()
+  })
+
+  test("does not delete or leave the temp session when abort fails", async () => {
+    const { api, calls, kv, nav, rows, toasts } = setup({ abortError: new Error("still stopping") })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+    await select(rows(), "btw.end")
+    await tick()
+
+    expect(calls).toEqual(["list", "fork", "update", "abort"])
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
+    expect(toasts.at(-1)).toEqual({
+      variant: "error",
+      message: "Failed to stop the active /btw session. It was not deleted: still stopping",
+    })
+  })
+
+  test("does not delete or leave the temp session when abort rejects", async () => {
+    const { api, calls, kv, nav, rows, toasts } = setup({ abortReject: new Error("connection lost") })
+    await plugin.tui(api, undefined, { state: "first" } as any)
+
+    await select(rows(), "btw.open")
+    await tick()
+    await tick()
+    await select(rows(), "btw.end")
+    await tick()
+
+    expect(calls).toEqual(["list", "fork", "update", "abort"])
+    expect(nav).toEqual([{ name: "session", params: { sessionID: "ses_btw" } }])
+    expectFastState(kv.get("opencode-bytheway.active"), "ses_main")
+    expect(toasts.at(-1)).toEqual({
+      variant: "error",
+      message: "Failed to stop the active /btw session. It was not deleted: connection lost",
+    })
   })
 
   test("does not rehydrate subagent sessions as active btw state", async () => {
@@ -1224,7 +1319,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["list", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "abort", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },
@@ -1246,7 +1341,7 @@ describe("opencode-bytheway tui plugin", () => {
     await select(rows(), "btw.end")
     await tick()
 
-    expect(calls).toEqual(["list", "fork", "update", "delete"])
+    expect(calls).toEqual(["list", "fork", "update", "abort", "delete"])
     expect(nav).toEqual([
       { name: "session", params: { sessionID: "ses_btw" } },
       { name: "session", params: { sessionID: "ses_main" } },

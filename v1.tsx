@@ -767,6 +767,9 @@ const tui: TuiPlugin = async (api) => {
         return;
       }
 
+      const stopped = await stoptemp(state.temp);
+      if (stopped) throw stopped;
+
       const temp = await messages(state.temp);
       const text = mergetext(mergeitems(temp, state));
 
@@ -839,6 +842,15 @@ const tui: TuiPlugin = async (api) => {
       return;
     }
 
+    const stopped = await stoptemp(state.temp);
+    if (stopped) {
+      toast({
+        variant: "error",
+        message: `Failed to stop the active ${slash(openname())} session. It was not deleted: ${msg(stopped)}`,
+      });
+      return;
+    }
+
     api.route.navigate("session", { sessionID: state.origin });
     refreshcommands();
     let result;
@@ -859,6 +871,15 @@ const tui: TuiPlugin = async (api) => {
       variant: "info",
       message: `Returned to the original session as it is now.`,
     });
+  };
+
+  const stoptemp = async (sessionID: string) => {
+    try {
+      const result = await api.client.session.abort({ sessionID });
+      return result?.error;
+    } catch (err) {
+      return err;
+    }
   };
 
   const status = async () => {

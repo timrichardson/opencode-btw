@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0-beta.4
+
+- Stop active OpenCode V1 generation before `/btw-end` or `/btw-merge` deletes its temporary session, preventing late writes into a removed session.
+- Preserve the temporary session and active plugin state when stopping generation fails so cleanup can be retried safely.
+
+Compatibility targets: OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17055`.
+
 ## 0.8.0-beta.3
 
 - Document simultaneous V1/V2 configuration and the safe process for retiring the V1 configuration after moving to V2 only.
