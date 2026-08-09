@@ -33,8 +33,11 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           if [[ "$version" == *-* ]]; then
-            echo "Only stable release tags are supported: $version" >&2
-            exit 1
+            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -60,7 +63,7 @@ jobs:
           NPM_TOKEN: ""
         run: |
           unset NODE_AUTH_TOKEN NPM_TOKEN NPM_CONFIG__AUTHTOKEN
-          npm publish --access public --tag latest
+          npm publish --access public --tag "${{ steps.meta.outputs.npm_tag }}"
 
       - name: Create GitHub release
         shell: bash
@@ -72,4 +75,8 @@ jobs:
             exit 0
           fi
 
+          if [[ "${{ steps.meta.outputs.prerelease }}" == "true" ]]; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --prerelease
+            exit 0
+          fi
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
