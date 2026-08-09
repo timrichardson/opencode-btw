@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0-beta.1
+## 0.8.0-beta.2
 
 - Add dual OpenCode V1 and V2 TUI plugin entrypoints under the existing `opencode-bytheway` package name.
 - Keep the V1 implementation and command behavior while moving it behind a lazy runtime entrypoint.

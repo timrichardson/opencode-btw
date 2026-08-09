@@ -11,7 +11,7 @@ OpenCode plugin that adds temporary "by the way" side-session workflows.
 Install or upgrade with OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.1 --global --force
+opencode plugin opencode-bytheway@0.8.0-beta.2 --global --force
 ```
 * use this method because tagging @latest does not update, it's a one-shot meaning of 'latest' (by intention of opencode)
 
@@ -23,7 +23,7 @@ Add the package to the global V2 TUI configuration at `~/.config/opencode/cli.js
 
 ```json
 {
-  "plugins": ["opencode-bytheway@0.8.0-beta.1"]
+  "plugins": ["opencode-bytheway@0.8.0-beta.2"]
 }
 ```
 
@@ -59,7 +59,7 @@ No nesting of btw sessions.
 For OpenCode V1, use OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.1 --global
+opencode plugin opencode-bytheway@0.8.0-beta.2 --global
 ```
 
 The package is TUI-only. V1 loads it from `tui.json[c]`; V2 loads it from the `plugins` array in global `cli.json`.
@@ -69,7 +69,7 @@ The package is TUI-only. V1 loads it from `tui.json[c]`; V2 loads it from the `p
 Use `--force` if you need to replace an existing pinned version (including if you used @latest because surprise, this does not update when versions change):
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.1 --global --force
+opencode plugin opencode-bytheway@0.8.0-beta.2 --global --force
 ```
 
 OpenCode 1.17.12 loads TUI plugins from `tui.json[c]`. Do not add this package to V1 `opencode.json[c]`; it does not export a server plugin.
@@ -86,7 +86,7 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.8.0-beta.1"]
+  "plugin": ["opencode-bytheway@0.8.0-beta.2"]
 }
 ```
 
@@ -186,7 +186,7 @@ It uses the same TUI-owned fork flow as `/btw your prompt here`.
 
 ## Changelog
 
-### 0.8.0-beta.1
+### 0.8.0-beta.2
 
 - Add dual OpenCode V1 and V2 support from the same npm package.
 - Keep the existing V1 TUI implementation and add a native V2 implementation using V2 storage, routing, commands, and session APIs.

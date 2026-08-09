@@ -78,7 +78,7 @@ Example OpenCode V2 `~/.config/opencode/cli.json` entry:
 
 ```json
 {
-  "plugins": ["opencode-bytheway@0.8.0-beta.1"]
+  "plugins": ["opencode-bytheway@0.8.0-beta.2"]
 }
 ```
 
