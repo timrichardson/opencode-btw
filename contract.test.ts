@@ -35,9 +35,9 @@ test("built package preserves both runtime entrypoints", async () => {
     },
     ui: {
       router: { current: () => ({ type: "home" }) },
-      slot: (name: string, mount: () => unknown) => {
-        v2Slots.push(name);
-        if (name === "app") mount();
+      slot: (claim: { append: string; render: () => unknown }) => {
+        v2Slots.push(claim.append);
+        if (claim.append === "app") claim.render();
         return () => {
           v2Disposed.value = true;
         };

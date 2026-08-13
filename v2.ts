@@ -463,15 +463,17 @@ export function createV2(context: Context) {
 
 export const setup = (async (context) => {
   const plugin = createV2(context);
-  context.ui.slot("sidebar.content", (props) =>
-    createComponent(BtwIndicator, {
-      context,
-      get active() {
-        return plugin.active(props.sessionID);
-      },
-    }),
-  );
-  return context.ui.slot("app", plugin.mount);
+  context.ui.slot({
+    append: "sidebar.content",
+    render: (props) =>
+      createComponent(BtwIndicator, {
+        context,
+        get active() {
+          return plugin.active(props.sessionID);
+        },
+      }),
+  });
+  return context.ui.slot({ append: "app", render: plugin.mount });
 }) satisfies Plugin.Definition["setup"];
 
 function sessiontitle() {

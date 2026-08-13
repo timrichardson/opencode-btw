@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0-beta.5
+
+- Update V2 TUI slot registration for the current object-based plugin API so `/btw` commands load again.
+- Update the V2 plugin contract dependency and package contract coverage for OpenCode `0.0.0-next-17377`.
+
+Compatibility targets: OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17377`.
+
 ## 0.8.0-beta.4
 
 - Stop active OpenCode V1 generation before `/btw-end` or `/btw-merge` deletes its temporary session, preventing late writes into a removed session.
