@@ -4,30 +4,30 @@ OpenCode plugin that adds temporary "by the way" side-session workflows.
 
 ## Quick notes on Installation / Upgrade
 
-`opencode-bytheway` supports both OpenCode V1 (`opencode`) and the OpenCode V2 beta (`opencode2`) from the same npm package. The hosts use separate TUI configuration files and automatically select the matching runtime entrypoint. They still share the usual global and project `opencode.json(c)` locations.
+`opencode-bytheway` supports both OpenCode V1 (`opencode`) and OpenCode V2 (`opencode2`) from the same npm package. The hosts use separate TUI configuration files and automatically select the matching runtime entrypoint. They still share the usual global and project `opencode.json(c)` locations.
 
 ### OpenCode V1
 
 Install or upgrade with OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.5 --global --force
+opencode plugin opencode-bytheway@0.8.0 --global --force
 ```
 * use this method because tagging @latest does not update, it's a one-shot meaning of 'latest' (by intention of opencode)
 
 * Restart or reload OpenCode after updating so the TUI plugin is reloaded.
 
-### OpenCode V2 beta
+### OpenCode V2
 
 Add the package to the global V2 TUI configuration at `~/.config/opencode/cli.json`:
 
 ```json
 {
-  "plugins": ["opencode-bytheway@0.8.0-beta.5"]
+  "plugins": ["opencode-bytheway@0.8.0"]
 }
 ```
 
-Restart `opencode2` after changing the package version. V2's plugin API is still beta, so this prerelease pins the OpenCode V2 build it was tested against.
+Restart `opencode2` after changing the package version.
 
 ### Keep V1 and V2 working side by side
 
@@ -40,7 +40,7 @@ Pin the same package version in both files. For example, use this for V1 in `~/.
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.8.0-beta.5"]
+  "plugin": ["opencode-bytheway@0.8.0"]
 }
 ```
 
@@ -48,7 +48,7 @@ And use this for V2 in `~/.config/opencode/cli.json`:
 
 ```json
 {
-  "plugins": ["opencode-bytheway@0.8.0-beta.5"]
+  "plugins": ["opencode-bytheway@0.8.0"]
 }
 ```
 
@@ -98,7 +98,7 @@ No nesting of btw sessions.
 For OpenCode V1, use OpenCode's plugin installer:
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.5 --global
+opencode plugin opencode-bytheway@0.8.0 --global
 ```
 
 The package is TUI-only. V1 loads it from `tui.json[c]`; V2 loads it from the `plugins` array in global `cli.json`.
@@ -108,7 +108,7 @@ The package is TUI-only. V1 loads it from `tui.json[c]`; V2 loads it from the `p
 Use `--force` if you need to replace an existing pinned version (including if you used @latest because surprise, this does not update when versions change):
 
 ```bash
-opencode plugin opencode-bytheway@0.8.0-beta.5 --global --force
+opencode plugin opencode-bytheway@0.8.0 --global --force
 ```
 
 OpenCode V1 1.18.15 loads TUI plugins from `tui.json[c]`. Do not add this package to V1 `opencode.json[c]`; it does not export a server plugin.
@@ -125,7 +125,7 @@ Optional version pin:
 
 ```jsonc
 {
-  "plugin": ["opencode-bytheway@0.8.0-beta.5"]
+  "plugin": ["opencode-bytheway@0.8.0"]
 }
 ```
 
@@ -224,6 +224,13 @@ Their absolute `file://` paths are machine-specific and should not be committed 
 It uses the same TUI-owned fork flow as `/btw your prompt here`.
 
 ## Changelog
+
+### 0.8.0
+
+- Promote the tested dual-runtime release to a stable package version.
+- Update V2 TUI slot registration for the current object-based plugin API so `/btw` commands load again.
+- Update the V2 plugin contract dependency and package contract coverage for OpenCode `0.0.0-next-17377`.
+- Tested with OpenCode V1 1.18.15 and OpenCode V2 `0.0.0-next-17377`.
 
 ### 0.8.0-beta.5
 
